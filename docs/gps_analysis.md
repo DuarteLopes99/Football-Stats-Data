@@ -30,6 +30,12 @@ with one schema is what makes "just append a row" possible.
 | `calories` | Estimated calories burned | both |
 | `notes` | Free text | both |
 
+Two more columns are **derived, never stored** — computed fresh every time a
+`PerformanceAnalyzer` loads the CSV (see §4):
+
+- **`match_category`** — `"training"` / `"official_match"` / `"practice_match"`.
+- **`season`** — a `"2025/26"`-style label.
+
 ## 2. Where the schema came from — and what it fixed
 
 `gps.data_store.build_from_excel()` is the one-time conversion from the original
@@ -62,6 +68,9 @@ save_sessions(sessions)   # overwrites data/gps/gps_sessions.csv
 
 **Preferred**: use the dashboard's "Add Session" tab — it's a form, not a spreadsheet
 edit, so there's no risk of breaking a column's dtype or misaligning a row.
+Setting **Competition type** correctly matters (see §4) — it's what decides
+whether a `game` session counts as an official match or a practice match in
+every chart and table.
 
 **Programmatic**:
 
@@ -88,53 +97,154 @@ Only `date` and `session_kind` are required; everything else defaults to missing
 The CSV is small (a season is ~150 rows) — appending and re-writing the whole
 file on every call is intentional, not a performance concern here.
 
-## 4. Analysis (`gps/analyzer.py`)
+## 4. Match category: official vs. practice vs. training
+
+Every `session_kind == "game"` row used to be treated as "a match," full stop —
+but the data already distinguishes a real competitive fixture from a practice
+game ("Jogo Treino"), via `competition_type`. `gps.analyzer.add_match_category_column()`
+derives a `match_category` column so analysis never conflates the two:
+
+| `session_kind` | `competition_type` | `match_category` |
+|---|---|---|
+| `"training"` | *(n/a)* | `"training"` |
+| `"game"` | `"Campeonato"` or `"Taça"` | `"official_match"` |
+| `"game"` | `"Treino"` or missing | `"practice_match"` |
+
+`match_category` — not `session_kind` — is the axis every comparison chart and
+table in `gps/analyzer.py` uses (`monthly_summary`, `compare_to_baseline`,
+`session_type_analysis`, `weekly_load`, and every `plot_*` method take a
+`category` argument or plot all three series). The one exception is
+`starter_vs_substitute()`, which still keys off `session_kind == "game"`
+directly — starting-lineup status is meaningful for both official and practice
+games, so it isn't split further.
+
+`monthly_quality_metric()` folds `match_category == "official_match"` into its
+40% "match" component and **ignores practice matches entirely** — a friendly
+against weaker/rotated opposition isn't a reliable read on competitive
+readiness.
+
+Because `add_match_category_column` is a standalone function (not only computed
+inside `PerformanceAnalyzer.__init__`), the dashboard applies it once right
+after loading, so its sidebar filter can offer "official match" as a real,
+independent choice before any analyzer is even constructed — the same pattern
+already used for date-range filtering.
+
+## 5. Seasons: why raw month numbers were wrong, and what replaced them
+
+A football season runs roughly July/August through May — it crosses a
+calendar-year boundary. Two consequences that the original
+`FootballPerformanceAnalyzer` port got wrong:
+
+1. **Sort order.** Grouping by a bare `month` (1–12) sorts January before
+   September, even though September came first in the season.
+2. **Cross-season mixing.** Once more than one season of data exists, grouping
+   by bare month would silently merge e.g. two different Septembers together.
+
+Both are fixed in `gps/analyzer.py`:
+
+- **`monthly_summary(category, year=None)`** groups on
+  `pd.Grouper(key="date", freq="MS")` — a real calendar timestamp — instead of
+  `df["month"]`. This alone makes every monthly chart/table chronologically
+  correct regardless of how many seasons are loaded. (`pd.Grouper` pads gaps
+  between the first and last session with empty months; `monthly_summary` drops
+  those by actual row count, not `duration_min`'s count specifically, so a
+  session missing just its duration doesn't vanish too.)
+- **`gps/seasons.py`** adds a `season` label per row (`season_label(date)` —
+  July 1 is the cutover: date.month >= 7 → `f"{year}/{year+1}"`, else
+  `f"{year-1}/{year}"`). The dashboard's season selector filters on this column
+  *before* constructing a `PerformanceAnalyzer` — no analyzer method takes a
+  `season` parameter, the instance is just scoped to whatever's selected,
+  exactly like the existing date-range/category filters.
+- **`season_summary()`** is the one method that intentionally spans every
+  season: it groups by `season` and returns one row per season (session counts
+  by category, total distance, peak official-match top speed, average quality
+  score) — see §7.
+
+`weekly_load()`'s `week` numbers are season-relative (they restart at 1 each
+season) — the dashboard's "Season" filter must be applied (or the data must
+already be single-season) before calling it, or week numbers from different
+seasons will be summed together.
+
+## 6. Analysis (`gps/analyzer.py`)
 
 `PerformanceAnalyzer` wraps a sessions DataFrame (typically the output of
-`load_sessions()`) and mirrors the original `FootballPerformanceAnalyzer`'s
-methods, but parameterized by `session_kind` instead of duplicating every method
-once for "treinos" and once for "jogos":
+`load_sessions()`, already filtered to whatever scope you want — see §5) and
+mirrors the original `FootballPerformanceAnalyzer`'s methods, parameterized by
+`category` (`"training"` / `"official_match"` / `"practice_match"`, see §4)
+instead of duplicating every method once per session kind:
 
-- `monthly_summary(session_kind, month=None, year=None)` — count/mean/sum/max
-  per month for every core metric.
-- `compare_to_baseline(session_kind, month=None)` — current average vs.
+- `monthly_summary(category, year=None)` — count/mean/sum/max per calendar
+  month (see §5), plus a `month_label` column (`"Sep 2025"`) for display.
+- `compare_to_baseline(category, month=None)` — current average vs.
   `DEFAULT_BASELINE` (typical distance/sprint/speed/accel/decel values), with a
   `Difference_%` column.
-- `session_type_analysis(session_kind)` — stats grouped by `session_type`
+- `session_type_analysis(category)` — stats grouped by `session_type`
   (trainings) or `competition_type` (games).
-- `weekly_load(week=None, month=None)` — training vs. match load per week, plus
-  a `total_*` column summing both.
-- `starter_vs_substitute()` — games only: performance split by `was_starter`.
-- `monthly_quality_metric(weights=None)` — a composite 0–100 score per month,
-  blending normalized (relative to that metric's max-across-months)
-  distance/sprint/speed/accel/decel values, weighted 60% training / 40% match.
-  Default weights live in the method; pass your own dict to emphasize different
-  metrics (e.g. more weight on `top_speed_kmh` if you're specifically tracking
-  speed development).
+- `weekly_load(week=None)` — training / official-match / practice-match load
+  per week, plus `total_*` columns summing all three (see the season-scoping
+  caveat in §5).
+- `starter_vs_substitute()` — all games (official + practice): performance
+  split by `was_starter`.
+- `monthly_quality_metric(weights=None)` — a composite 0–100 score per calendar
+  month, blending normalized (relative to that metric's max-across-months)
+  distance/sprint/speed/accel/decel values, weighted 60% training / 40%
+  official-match. Default weights live in the method; pass your own dict to
+  emphasize different metrics (e.g. more weight on `top_speed_kmh` if you're
+  specifically tracking speed development).
+- `season_summary()` — one row per season (see §5).
 
 Chart methods (`plot_monthly_comparison`, `plot_best_worst`,
 `plot_weekly_load_heatmap`, `plot_intensity_radar`, `plot_performance_trends`,
 `plot_quality_evolution`) all **return a `matplotlib.figure.Figure`** rather than
 calling `plt.show()`, so the dashboard renders them with `st.pyplot(fig)`. Call
 them directly in a notebook or script too — just do something with the returned
-figure (`fig.savefig(...)`, or let Jupyter display it).
+figure (`fig.savefig(...)`, or let Jupyter display it). Every comparison chart
+plots all three categories (`gps.analyzer.CATEGORY_COLORS` /
+`CATEGORY_MARKERS` keep the color/marker consistent across charts).
 
-## 5. Dashboard
+## 7. Display formatting (`gps/formatting.py`)
+
+Raw schema columns (and the `_mean`/`_sum`/`_max`/`_count`-suffixed aggregate
+columns the methods above produce from them) are snake_case — fine for code,
+unreadable as a table header. `gps/formatting.py` centralizes the fix:
+
+- `humanize_columns(df)` — returns a copy with Title Case column names. Handles
+  plain schema columns, aggregate-suffixed columns (`total_distance_m_mean` →
+  "Avg Total Distance (m)"), and `weekly_load`'s category-prefixed columns
+  (`official_match_total_distance_m` → "Official Match – Total Distance (m)").
+  Anything unmapped falls back to `.replace('_', ' ').title()`.
+- `numeric_column_config(df)` — a `st.column_config.NumberColumn` format spec
+  per float column, so numbers render with fixed, short decimal places instead
+  of long raw floats.
+
+**Apply both right before rendering, never to data you're about to compute
+with** — `humanize_columns` renames columns, so a renamed frame can't be fed
+back into another analyzer method. The dashboard's `_show_table()` helper is
+the canonical example: `st.dataframe(humanize_columns(df), column_config=numeric_column_config(humanize_columns(df)), ...)`.
+
+## 8. Dashboard
 
 ```bash
 streamlit run dashboards/gps_dashboard.py
 ```
 
-Sidebar filters: session kind (training/game/both) and a date range. Tabs:
-Overview (raw session table + totals), Monthly, Weekly Load, Intensity (radar
-chart + starter-vs-substitute table), Trends (scatter + rolling average, and a
-best/worst-sessions bar chart), Baseline, Quality, and Add Session.
+Sidebar: a **Season** selector (a specific season, or "All seasons"), a
+**Match category** multiselect (training/official match/practice match), and a
+date range. Tabs:
 
-## 6. Extending to multi-year analysis
-
-Because everything is one CSV keyed by `date`, comparing across seasons or years
-is just a filter — no separate "per-season" files to reconcile. The `month`
-column repeats across years (e.g. `9` for every September), so month-based
-aggregations like `monthly_summary()` mix years together by default; filter by
-`year=` when you want a single season's monthly breakdown, or add a `year`
-column upstream if you want year-aware grouping without manual filtering.
+- **Overview** — raw session table + totals.
+- **Monthly** — the 3-category monthly comparison chart.
+- **Weekly Load** — four narrower tables (Training / Official Matches /
+  Practice Matches / Overall) instead of one wide clipped one, plus the load
+  heatmap. Shows a warning if "All seasons" is selected with more than one
+  season loaded, since week numbers would otherwise be summed across seasons.
+- **Intensity** — the 3-category radar chart + starter-vs-substitute table.
+- **Trends** — scatter + rolling average per metric, and a best/worst-sessions
+  bar chart (pick the match category).
+- **Baseline** — current vs. reference values (pick the match category).
+- **Quality** — the monthly quality-score chart.
+- **Season Summary** — `season_summary()`'s table plus a per-season distance bar
+  chart and quality-score line chart. **Always covers every season**,
+  independent of the sidebar's Season selector — this is the career-wide view
+  (see §5).
+- **Add Session** — the append-a-session form.

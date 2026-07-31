@@ -30,7 +30,7 @@ pip install -e .
 ```bash
 streamlit run dashboards/season_dashboard.py   # league table + Monte Carlo prediction
 streamlit run dashboards/gps_dashboard.py      # GPS trends + add-session form
-pytest tests/                                   # 11 tests, ~2s
+pytest tests/                                   # 16 tests, ~2s
 ```
 
 ## Repository layout
@@ -67,6 +67,17 @@ Football-Stats-Data/
 - **Chart functions in `gps/analyzer.py` return a `matplotlib.figure.Figure`**,
   they don't call `plt.show()`. If you use them outside the dashboard, do
   something with the returned figure.
+- **A GPS "game" session's `competition_type` decides whether it's an official
+  match or a practice match** (`"Campeonato"`/`"Taça"` → official,
+  `"Treino"`/missing → practice) — get it right when adding a session, since
+  every chart/table in the GPS dashboard splits on this, not on `session_kind`
+  alone. See "Match category" in [`docs/gps_analysis.md`](docs/gps_analysis.md#4-match-category-official-vs-practice-vs-training).
+- **GPS analysis is season-scoped** (a season = Jul 1–Jun 30) — `weekly_load()`
+  sums across seasons incorrectly if called on multi-season data without first
+  filtering to one season, since week numbers restart each season. The
+  dashboard's Season selector handles this; new code calling `weekly_load()`
+  directly needs to filter first. See §5 of
+  [`docs/gps_analysis.md`](docs/gps_analysis.md#5-seasons-why-raw-month-numbers-were-wrong-and-what-replaced-them).
 - **`.venv/` is gitignored on purpose** — don't commit it. Regenerate with the
   Setup steps above on a fresh clone.
 
