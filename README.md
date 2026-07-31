@@ -8,9 +8,13 @@ Two things live in this repo:
 2. **GPS performance analysis** — track training/match GPS data (distance, sprints,
    top speed, load, etc.) and analyze trends over a season and across seasons.
 
-Both have a Streamlit dashboard. Everything else is a small, testable Python
-package (`src/football_stats`) that the dashboards and any future notebooks/scripts
-call into — the goal is that no analysis logic lives only inside a notebook cell.
+Both have a Streamlit dashboard. Everything else is a small, tested Python
+package (`src/football_stats`) that the dashboards call into — the goal is that
+analysis logic lives in reusable functions, not only inside notebook cells.
+
+📖 **Read the full docs before making changes:**
+[`docs/season_prediction.md`](docs/season_prediction.md) ·
+[`docs/gps_analysis.md`](docs/gps_analysis.md)
 
 ## Setup
 
@@ -21,100 +25,78 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-## Season stats & prediction
+## Quickstart
 
 ```bash
-streamlit run dashboards/season_dashboard.py
+streamlit run dashboards/season_dashboard.py   # league table + Monte Carlo prediction
+streamlit run dashboards/gps_dashboard.py      # GPS trends + add-session form
+pytest tests/                                   # 11 tests, ~2s
 ```
 
-Pick a season, see the current table, each team's attack/defense strength, and run
-a Monte Carlo simulation (Poisson-distributed goals per match, home-advantage
-factor) of the remaining fixtures. The prediction tab shows the expected final
-table plus each team's probability of finishing 1st / in the top 3 / in the
-bottom 3.
+## Repository layout
 
-Seasons are declared in [`src/football_stats/config.py`](src/football_stats/config.py)
-as a `SeasonConfig` (team slugs, their zerozero.pt fixtures URLs, and the exact
-competition name to filter on) — the scraping/processing/prediction pipeline is
-generic and driven entirely by this config, so adding a new season or division
-means adding a `SeasonConfig`, not touching pipeline code.
-
-Two seasons are seeded today:
-
-- **`fermedo_2024_25`** — UD Fermedo's 2024/25 season, fully played (16 teams,
-  240 matches). Good as a complete worked example and as the regression fixture in
-  `tests/`.
-- **`mansores_2025_26`** — Mansores' current, in-progress season. **Only Mansores'
-  own 22 fixtures are seeded** (11 played + 11 remaining) — the other 11 teams'
-  results against *each other* haven't been scraped yet, so their table rows only
-  reflect their game against Mansores. Mansores' own row, and its remaining
-  fixture list, are accurate. Run the scraper to backfill full league coverage:
-
-  ```bash
-  python -m football_stats.scraping.cli mansores_2025_26
-  ```
-
-  then re-run the fixture-processing step (`football_stats.season.fixtures.split_played_remaining`
-  over all scraped team files, saved with `save_processed`) to refresh
-  `data/seasons/mansores_2025_26/processed/`.
-
-### Package layout
-
-- `season/fixtures.py` — turn raw per-team scrape exports into deduped played/remaining fixture tables
-- `season/league_table.py` — standings from match results
-- `season/team_strength.py` — attack/defense strength relative to league average
-- `season/predictor.py` — Monte Carlo season simulation
-- `players/match_events.py` — goals/assists/cards event parsing, minutes-played estimation, per-player season stats
-- `players/player_stats.py` — aggregate scraped per-competition player stats
-- `scraping/zerozero_client.py` — Selenium/BeautifulSoup scraping helpers (fixtures, match reports, squads, player stats)
-
-## GPS performance analysis
-
-```bash
-streamlit run dashboards/gps_dashboard.py
+```
+Football-Stats-Data/
+├── docs/                    # detailed docs — start here for anything beyond a quick run
+├── src/football_stats/      # the package: scraping, season, players, gps
+├── dashboards/               # the two Streamlit apps
+├── data/
+│   ├── seasons/<key>/{raw,processed}/   # per-season fixture data
+│   └── gps/gps_sessions.csv             # every training + match GPS session, one tidy file
+└── tests/                    # pytest — includes regression tests for two bugs found while porting
 ```
 
-All GPS sessions (games + trainings) live in one tidy, appendable file:
-`data/gps/gps_sessions.csv`. The dashboard has a tab to add a new session through
-a form — it appends a row to that CSV and the charts update immediately. No more
-editing the spreadsheet by hand.
+## Important instructions
 
-This file was originally seeded from `SATS_Football_GPS_Advanced.xlsx`
-(`gps.data_store.build_from_excel`), which cleans up two issues in that source
-file: a merged-header artifact row in the `Jogos` sheet (where "1ª Half"/"2ª Half"
-sprint sub-column labels had landed in the first data row instead of the header),
-and a couple of free-text marker rows ("FIM DE EPOCA", a pickup-game placeholder)
-that aren't real Date-indexed sessions.
+- **Don't hand-edit `data/gps/gps_sessions.csv`'s structure.** Add sessions
+  through the dashboard's "Add Session" tab, or `gps.data_store.append_session()`
+  — both validate the minimum required fields and keep the schema (documented in
+  [`docs/gps_analysis.md`](docs/gps_analysis.md)) consistent. Editing values in
+  place (e.g. correcting a typo) is fine.
+- **Adding a season/division is a config change, not a code change** — see
+  "Declaring a season" in [`docs/season_prediction.md`](docs/season_prediction.md).
+  Don't hardcode a new team or competition name into `season/*.py`.
+- **After scraping fresh fixtures**, you still need to re-run the processing step
+  (`split_played_remaining` + `save_processed`) to refresh
+  `data/seasons/<key>/processed/` — the scraper only writes `raw/`. See step 3 of
+  the season-prediction doc.
+- **`mansores_2025_26` is only partially seeded** (Mansores' own games only, not
+  other teams' games against each other) — the season dashboard shows an in-app
+  banner about this. Don't treat other teams' standings rows as accurate until
+  you've run the scraper for full coverage.
+- **Chart functions in `gps/analyzer.py` return a `matplotlib.figure.Figure`**,
+  they don't call `plt.show()`. If you use them outside the dashboard, do
+  something with the returned figure.
+- **`.venv/` is gitignored on purpose** — don't commit it. Regenerate with the
+  Setup steps above on a fresh clone.
 
-Dashboard tabs: monthly comparison, weekly load, training-vs-match intensity
-(radar chart), performance trends over time, baseline comparison (against
-`gps.analyzer.DEFAULT_BASELINE`), and a monthly composite quality score. The
-analysis logic (`gps/analyzer.py`) is ported from the original
-`StatsSports/football_performance_analysis.py` script, adapted to the unified
-`session_kind` schema instead of two separate training/match DataFrames.
+## Known bugs fixed while porting
 
-## Tests
-
-```bash
-pytest tests/
-```
-
-Covers the league table computation, the Monte Carlo predictor, and two
-regressions found while porting the original notebooks:
+Both were caught by testing against real data, not by inspection — see
+`tests/test_fixtures.py` and `tests/test_predictor.py`.
 
 1. **Home/away score swap** — the source notebooks read `Result` (always
    "home score-away score") as if it were "tracked-team score-opponent score",
-   silently flipping the outcome of every away fixture. Fixed in
-   `season/fixtures.py`; see `tests/test_fixtures.py`.
+   silently flipping the outcome of every away fixture. Fixed in `season/fixtures.py`.
 2. **Double-averaging in the predictor** — the source notebook's final merge
    divided already-averaged simulation stats by `n_simulations` a second time,
-   producing nonsensical predicted values. Fixed in `season/predictor.py`; see
-   `tests/test_predictor.py`.
+   producing nonsensical predicted values (e.g. `Draws_Predicted: 965`). Fixed in
+   `season/predictor.py`.
 
-## Not yet migrated
+Full explanation of both, with the exact numbers, in
+[`docs/season_prediction.md`](docs/season_prediction.md#known-bugs-fixed).
 
-`StatsSports/champions_analysys.ipynb`, `champions_utils.py`, and
-`Jogos_Vitoias_Fermedo.xlsx` (a multi-season "champions" comparison across
-years, built on a hand-formatted spreadsheet) weren't brought into this repo —
-they're a reasonable future extension of the season-stats side once there's a
-reproducible, non-hand-edited source for multi-season historical data.
+## What's outside this repo
+
+The parent `StatsSports/` folder (this repo lives inside it) still has:
+
+- **`Logos/`**, **`champions_analysys.ipynb`**, **`champions_utils.py`**,
+  **`Jogos_Vitoias_Fermedo.xlsx`** — a multi-season "champions" comparison across
+  years, built on a hand-formatted spreadsheet. Not part of either focus area
+  above and not ported here; a reasonable future extension once there's a
+  reproducible (non-hand-edited) source for multi-season historical data.
+- **`_archive/`** — the original exploratory notebooks and intermediate xlsx/csv
+  exports this repo's `src/football_stats` package was built from (scraping
+  notebooks, `football_performance_analysis.py`, the original
+  `SATS_Football_GPS_Advanced.xlsx`, etc.). Kept for reference; nothing in this
+  repo depends on it.
