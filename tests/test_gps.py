@@ -2,6 +2,7 @@ import pandas as pd
 
 from football_stats.gps.data_store import SCHEMA_COLUMNS, append_session, load_sessions
 from football_stats.gps.analyzer import PerformanceAnalyzer
+from football_stats.gps.position_baselines import get_baseline
 
 SESSIONS = pd.DataFrame(
     [
@@ -49,10 +50,10 @@ def test_analyzer_monthly_summary_and_baseline():
     assert not training_summary.empty
     assert training_summary.iloc[0]["total_distance_m_mean"] == 8000
 
-    comparison = analyzer.compare_to_baseline("training")
+    comparison = analyzer.compare_to_baseline("training", position="central_midfielder")
     row = comparison[comparison["Metric"] == "Total Distance (m)"].iloc[0]
-    assert row["Current_Avg"] == 8000
-    assert row["Baseline"] == 9000
+    assert row["Current"] == 8000  # duration_min == 90, so per-90 normalization is a no-op here
+    assert row["Baseline"] == get_baseline("training", "central_midfielder")["total_distance_m"]
 
 
 def test_append_session_persists_and_reloads(tmp_path):

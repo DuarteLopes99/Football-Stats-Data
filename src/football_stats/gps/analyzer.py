@@ -33,7 +33,9 @@ import plotly.graph_objects as go
 import seaborn as sns
 
 from football_stats.gps.formatting import DISPLAY_LABELS, MATCH_CATEGORY_LABELS
+from football_stats.gps.position_baselines import get_baseline
 from football_stats.gps.seasons import add_season_column
+from football_stats.gps.skillcorner_metrics import add_per90_columns
 
 sns.set_style("whitegrid")
 
@@ -51,15 +53,9 @@ NUMERIC_METRICS = [
 ]
 
 BASELINE_METRICS = ["total_distance_m", "sprint_distance_m", "high_speed_distance_m", "top_speed_kmh", "accelerations", "decelerations"]
-
-DEFAULT_BASELINE = {
-    "total_distance_m": 9000,
-    "high_speed_distance_m": 1200,
-    "sprint_distance_m": 300,
-    "top_speed_kmh": 31,
-    "accelerations": 40,
-    "decelerations": 40,
-}
+"""Compared per-90-minute (via ``skillcorner_metrics.add_per90_columns``) against a
+position baseline, except ``top_speed_kmh`` — a peak, not a cumulative rate — which
+is compared as a session max against the baseline's reference peak speed."""
 
 MATCH_CATEGORIES = ["training", "official_match", "practice_match"]
 CATEGORY_COLORS = {"training": "#2ecc71", "official_match": "#e74c3c", "practice_match": "#f39c12"}
@@ -98,14 +94,13 @@ def add_match_category_column(df: pd.DataFrame) -> pd.DataFrame:
 
 
 class PerformanceAnalyzer:
-    def __init__(self, sessions: pd.DataFrame, baseline: dict[str, float] | None = None):
+    def __init__(self, sessions: pd.DataFrame):
         self.sessions = sessions.copy()
         self.sessions["date"] = pd.to_datetime(self.sessions["date"])
         for col in NUMERIC_METRICS:
             self.sessions[col] = pd.to_numeric(self.sessions[col], errors="coerce")
         self.sessions = add_match_category_column(self.sessions)
         self.sessions = add_season_column(self.sessions)
-        self.baseline = baseline or DEFAULT_BASELINE
 
     def _filter(self, category: str, month: int | None = None, year: int | None = None) -> pd.DataFrame:
         df = self.sessions[self.sessions["match_category"] == category]
@@ -157,20 +152,47 @@ class PerformanceAnalyzer:
         summary["month_label"] = summary["date"].dt.strftime("%b %Y")
         return summary.reset_index(drop=True)
 
-    def compare_to_baseline(self, category: str, month: int | None = None) -> pd.DataFrame:
+    def compare_to_baseline(self, category: str, position: str, month: int | None = None) -> pd.DataFrame:
+        """Current performance vs. a researched, position-specific baseline
+        (see ``gps.position_baselines`` — sourced from published studies, not
+        the old spreadsheet's unsourced flat baseline).
+
+        Every metric except ``top_speed_kmh`` is compared **per 90 minutes
+        played** (via ``add_per90_columns``), since baselines are per-full-match/
+        session figures and our sessions vary in length — comparing raw
+        session totals against a per-90 baseline would unfairly penalize a
+        60-minute appearance. ``top_speed_kmh`` is a peak, not a cumulative
+        rate, so it's compared as this scope's session max instead.
+        """
         df = self._filter(category, month)
         if df.empty:
             return pd.DataFrame()
+        df90 = add_per90_columns(df)
+        baseline = get_baseline(category, position)
+
         rows = []
         for col in BASELINE_METRICS:
-            current = df[col].max() if col == "top_speed_kmh" else df[col].mean()
-            baseline = self.baseline.get(col)
-            row = {"Metric": _label(col), "Current_Avg": round(current, 2), "Baseline": baseline}
-            if baseline:
-                row["Difference"] = round(current - baseline, 2)
-                row["Difference_%"] = round((current - baseline) / baseline * 100, 2)
+            if col == "top_speed_kmh":
+                current = df[col].max()
+            else:
+                current = df90[f"{col}_per90"].mean()
+            ref = baseline.get(col)
+            row = {"Metric": _label(col), "Current": round(current, 2) if pd.notna(current) else None, "Baseline": ref}
+            if ref:
+                row["Difference"] = round(current - ref, 2) if pd.notna(current) else None
+                row["Difference_%"] = round((current - ref) / ref * 100, 2) if pd.notna(current) else None
             rows.append(row)
         return pd.DataFrame(rows)
+
+    def average_minutes(self, category: str) -> float:
+        """Average ``duration_min`` for one match category — context for the
+        per-90 baseline comparison (a session's actual length vs. the 90-minute
+        basis the baseline is expressed in).
+        """
+        df = self._filter(category)
+        if df.empty:
+            return float("nan")
+        return round(float(df["duration_min"].mean()), 1)
 
     def session_type_analysis(self, category: str) -> pd.DataFrame:
         df = self._filter(category)

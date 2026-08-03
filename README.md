@@ -15,7 +15,8 @@ analysis logic lives in reusable functions, not only inside notebook cells.
 📖 **Read the full docs before making changes:**
 [`docs/season_prediction.md`](docs/season_prediction.md) ·
 [`docs/gps_analysis.md`](docs/gps_analysis.md) ·
-[`docs/skillcorner_metrics.md`](docs/skillcorner_metrics.md)
+[`docs/skillcorner_metrics.md`](docs/skillcorner_metrics.md) ·
+[`docs/position_baselines.md`](docs/position_baselines.md)
 
 ## Setup
 
@@ -31,7 +32,7 @@ pip install -e .
 ```bash
 streamlit run dashboards/season_dashboard.py   # league table + Monte Carlo prediction
 streamlit run dashboards/gps_dashboard.py      # GPS trends + add-session form
-pytest tests/                                   # 23 tests, ~2.5s
+pytest tests/                                   # 30 tests, ~2.5s
 ```
 
 ## Repository layout
@@ -88,6 +89,14 @@ Football-Stats-Data/
   *adaptation* of PSV-99, not the metric itself; ACWR is general sports
   science (Gabbett 2016), not theirs. Keep that distinction when extending
   `gps/skillcorner_metrics.py`.
+- **`gps/position_baselines.py` replaced the old spreadsheet baseline** (a
+  single unsourced set of numbers) with position-specific figures from
+  published research. Training baselines are *estimated* from the match
+  baseline (one flat ratio per metric, not position-specific — no study was
+  found for that), and top speed isn't split by position at all (no reliable
+  per-position data found) — both gaps are deliberate, not oversights. See
+  [`docs/position_baselines.md`](docs/position_baselines.md) before adding a
+  number here; don't add position-specific figures without a citation.
 
 ## Known bugs fixed while porting
 

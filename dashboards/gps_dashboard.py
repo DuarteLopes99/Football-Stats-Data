@@ -18,6 +18,7 @@ from football_stats.gps.analyzer import MATCH_CATEGORIES, PerformanceAnalyzer, a
 from football_stats.gps.data_store import DEFAULT_SESSIONS_PATH, append_session, load_sessions  # noqa: E402
 from football_stats.gps.formatting import DISPLAY_LABELS, MATCH_CATEGORY_LABELS, humanize_columns, numeric_column_config  # noqa: E402
 from football_stats.gps.gauges import acwr_gauge, intensity_gauge, percentile_gauge, quality_gauge, top_speed_gauge  # noqa: E402
+from football_stats.gps.position_baselines import POSITION_LABELS, POSITIONS  # noqa: E402
 from football_stats.gps.seasons import add_season_column  # noqa: E402
 from football_stats.gps.skillcorner_metrics import (  # noqa: E402
     PER90_METRICS,
@@ -220,10 +221,37 @@ def main() -> None:
 
     with tabs[5]:
         st.subheader("Baseline comparison")
-        category = st.selectbox(
-            "Match category", MATCH_CATEGORIES, format_func=lambda c: MATCH_CATEGORY_LABELS[c], key="baseline_category"
+        st.caption(
+            "Position-specific baselines sourced from published research (Di Salvo et al. 2007 for distance "
+            "metrics; a separate GPS accel/decel study for accelerations/decelerations) — not the old "
+            "spreadsheet's unsourced flat baseline. Training baselines are estimated from the match baseline "
+            "using a documented intensity ratio, since no position-specific training study was found. "
+            "Full sourcing: `docs/gps_analysis.md`."
         )
-        _show_table(analyzer.compare_to_baseline(category))
+
+        bcol1, bcol2 = st.columns(2)
+        with bcol1:
+            position = st.selectbox(
+                "Position", POSITIONS, format_func=lambda p: POSITION_LABELS[p], key="baseline_position"
+            )
+        with bcol2:
+            category = st.selectbox(
+                "Match category", MATCH_CATEGORIES, format_func=lambda c: MATCH_CATEGORY_LABELS[c], key="baseline_category"
+            )
+
+        mcol1, mcol2, mcol3 = st.columns(3)
+        mcol1.metric("Avg Training Duration (min)", analyzer.average_minutes("training"))
+        mcol2.metric("Avg Official Match Duration (min)", analyzer.average_minutes("official_match"))
+        mcol3.metric("Avg Practice Match Duration (min)", analyzer.average_minutes("practice_match"))
+        st.caption(
+            "Baselines are expressed per 90 minutes; the averages above show how far your actual session "
+            "length is from that basis. A session much shorter than 90 minutes (e.g. a late substitute "
+            "appearance) can show an inflated per-90 rate for bursty metrics like sprint distance — the rate "
+            "is real, but extrapolating a short high-intensity spell across a full 90 minutes overstates what "
+            "a full match at that pace would actually look like."
+        )
+
+        _show_table(analyzer.compare_to_baseline(category, position=position))
 
     with tabs[6]:
         st.subheader("Monthly quality evolution")

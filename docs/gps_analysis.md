@@ -175,9 +175,14 @@ instead of duplicating every method once per session kind:
 
 - `monthly_summary(category, year=None)` — count/mean/sum/max per calendar
   month (see §5), plus a `month_label` column (`"Sep 2025"`) for display.
-- `compare_to_baseline(category, month=None)` — current average vs.
-  `DEFAULT_BASELINE` (typical distance/sprint/speed/accel/decel values), with a
-  `Difference_%` column.
+- `compare_to_baseline(category, position, month=None)` — current per-90 rate
+  vs. a **researched, position-specific baseline** (`gps.position_baselines`
+  — see [`docs/position_baselines.md`](position_baselines.md) for full
+  sourcing), with a `Difference_%` column. Everything except `top_speed_kmh`
+  is normalized to per-90-minutes first (`skillcorner_metrics.add_per90_columns`)
+  before comparing, since sessions vary in length and baselines are per-full-match.
+- `average_minutes(category)` — mean `duration_min` for one category; context
+  for how far an average session sits from the baseline's 90-minute basis.
 - `session_type_analysis(category)` — stats grouped by `session_type`
   (trainings) or `competition_type` (games).
 - `weekly_load(week=None)` — training / official-match / practice-match load
@@ -258,7 +263,10 @@ date range. Tabs:
 - **Intensity** — the 3-category radar chart + starter-vs-substitute table.
 - **Trends** — scatter + rolling average per metric, and a best/worst-sessions
   bar chart (pick the match category).
-- **Baseline** — current vs. reference values (pick the match category).
+- **Baseline** — current per-90 rate vs. a researched, position-specific
+  reference (pick both the position and the match category), plus average
+  session-length metrics for training/official/practice so you can judge how
+  far a session sits from the baseline's 90-minute basis.
 - **Quality** — the monthly quality-score chart.
 - **Season Summary** — `season_summary()`'s table plus a per-season distance bar
   chart and quality-score line chart. **Always covers every season**,
