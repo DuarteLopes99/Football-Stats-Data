@@ -217,6 +217,17 @@ unreadable as a table header. `gps/formatting.py` centralizes the fix:
   per float column, so numbers render with fixed, short decimal places instead
   of long raw floats.
 
+## 7a. Performance Insights: per-90, percentiles, ACWR, gauges
+
+`gps/skillcorner_metrics.py` and `gps/gauges.py` power the dashboard's
+**Performance Insights** tab — per-90-minute normalization, percentile-rank
+comparison against the player's own history, a PSV-99-inspired "robust top
+speed," and the Acute:Chronic Workload Ratio, each with a Plotly gauge.
+**Full attribution writeup (what's genuinely SkillCorner methodology, what's
+adapted, what's general sports science) lives in
+[`docs/skillcorner_metrics.md`](skillcorner_metrics.md) — read it before
+extending this module or calling something "SkillCorner" in a chart label.**
+
 **Apply both right before rendering, never to data you're about to compute
 with** — `humanize_columns` renames columns, so a renamed frame can't be fed
 back into another analyzer method. The dashboard's `_show_table()` helper is
@@ -247,4 +258,8 @@ date range. Tabs:
   chart and quality-score line chart. **Always covers every season**,
   independent of the sidebar's Season selector — this is the career-wide view
   (see §5).
+- **Performance Insights** — ACWR, Quality Score, and Robust Top Speed gauges;
+  a percentile-rank gauge for a metric you pick; a High-Speed % intensity
+  gauge; a per-90-minute table; and a "Methodology" expander with the
+  SkillCorner attribution breakdown (see §7a).
 - **Add Session** — the append-a-session form.

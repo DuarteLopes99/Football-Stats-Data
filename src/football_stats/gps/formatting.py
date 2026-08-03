@@ -53,6 +53,10 @@ def _humanize_one(col: str) -> str:
         return MATCH_CATEGORY_LABELS[col]
     if col == "duration_min_count":
         return "Sessions"
+    if col.endswith("_per90"):
+        base = col[: -len("_per90")]
+        if base in DISPLAY_LABELS:
+            return f"{DISPLAY_LABELS[base]} per 90"
 
     for suffix, suffix_label in _AGG_SUFFIX_LABELS.items():
         marker = f"_{suffix}"

@@ -14,7 +14,8 @@ analysis logic lives in reusable functions, not only inside notebook cells.
 
 📖 **Read the full docs before making changes:**
 [`docs/season_prediction.md`](docs/season_prediction.md) ·
-[`docs/gps_analysis.md`](docs/gps_analysis.md)
+[`docs/gps_analysis.md`](docs/gps_analysis.md) ·
+[`docs/skillcorner_metrics.md`](docs/skillcorner_metrics.md)
 
 ## Setup
 
@@ -30,7 +31,7 @@ pip install -e .
 ```bash
 streamlit run dashboards/season_dashboard.py   # league table + Monte Carlo prediction
 streamlit run dashboards/gps_dashboard.py      # GPS trends + add-session form
-pytest tests/                                   # 16 tests, ~2s
+pytest tests/                                   # 23 tests, ~2.5s
 ```
 
 ## Repository layout
@@ -80,6 +81,13 @@ Football-Stats-Data/
   [`docs/gps_analysis.md`](docs/gps_analysis.md#5-seasons-why-raw-month-numbers-were-wrong-and-what-replaced-them).
 - **`.venv/` is gitignored on purpose** — don't commit it. Regenerate with the
   Setup steps above on a fresh clone.
+- **Don't badge a metric as "SkillCorner" without checking
+  [`docs/skillcorner_metrics.md`](docs/skillcorner_metrics.md) first.** Only
+  per-90 normalization and percentile-based comparison are directly borrowed
+  from their actual open-source toolkit; `robust_top_speed` is explicitly an
+  *adaptation* of PSV-99, not the metric itself; ACWR is general sports
+  science (Gabbett 2016), not theirs. Keep that distinction when extending
+  `gps/skillcorner_metrics.py`.
 
 ## Known bugs fixed while porting
 
