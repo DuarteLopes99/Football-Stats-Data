@@ -194,12 +194,18 @@ instead of duplicating every method once per session kind:
 - `season_summary()` — one row per season (see §5).
 
 Chart methods (`plot_monthly_comparison`, `plot_best_worst`,
-`plot_weekly_load_heatmap`, `plot_intensity_radar`, `plot_performance_trends`,
-`plot_quality_evolution`) all **return a `matplotlib.figure.Figure`** rather than
-calling `plt.show()`, so the dashboard renders them with `st.pyplot(fig)`. Call
-them directly in a notebook or script too — just do something with the returned
-figure (`fig.savefig(...)`, or let Jupyter display it). Every comparison chart
-plots all three categories (`gps.analyzer.CATEGORY_COLORS` /
+`plot_intensity_radar`, `plot_performance_trends`, `plot_quality_evolution`)
+all **return a `matplotlib.figure.Figure`** rather than calling `plt.show()`,
+so the dashboard renders them with `st.pyplot(fig)`. **`plot_weekly_load_heatmap`
+is the one exception** — it returns a `plotly.graph_objects.Figure`
+(`st.plotly_chart(fig)`), because a season can span 30+ weeks and cramming an
+on-cell number into that many narrow matplotlib columns made the text
+overlap and become unreadable regardless of font size; Plotly's hover
+tooltip shows the exact raw value instead, so no on-cell text is needed.
+Call the matplotlib ones directly in a notebook or script too — just do
+something with the returned figure (`fig.savefig(...)`, or let Jupyter
+display it). Every comparison chart plots all three categories
+(`gps.analyzer.CATEGORY_COLORS` /
 `CATEGORY_MARKERS` keep the color/marker consistent across charts).
 
 ## 7. Display formatting (`gps/formatting.py`)

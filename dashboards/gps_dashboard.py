@@ -193,7 +193,7 @@ def main() -> None:
                 _show_table(weekly[[c for c in cols if c in weekly.columns]])
             fig = analyzer.plot_weekly_load_heatmap()
             if fig is not None:
-                st.pyplot(fig)
+                st.plotly_chart(fig, use_container_width=True)
 
     with tabs[3]:
         st.subheader("Training vs official vs practice intensity")

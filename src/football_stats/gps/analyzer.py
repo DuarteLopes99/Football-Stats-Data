@@ -17,7 +17,11 @@ and compared "training vs matches" as if every match were the same. Here:
   2026) still sorts and displays chronologically instead of Jan-before-Sep.
 
 Plot methods return a ``matplotlib.figure.Figure`` (for ``st.pyplot(fig)``)
-instead of calling ``plt.show()``.
+instead of calling ``plt.show()`` — except ``plot_weekly_load_heatmap``, which
+returns a ``plotly.graph_objects.Figure`` (for ``st.plotly_chart(fig)``): a
+season can span 30+ weeks, and cramming an on-cell number into that many
+narrow matplotlib columns made the text unreadable regardless of font size.
+Plotly's hover tooltip replaces the on-cell annotation instead.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import seaborn as sns
 
 from football_stats.gps.formatting import DISPLAY_LABELS, MATCH_CATEGORY_LABELS
@@ -352,21 +357,41 @@ class PerformanceAnalyzer:
         return fig
 
     def plot_weekly_load_heatmap(self):
+        """Interactive Plotly heatmap — the one chart method that isn't
+        matplotlib (see the module docstring). A season can span 30+ weeks;
+        cramming an on-cell number into each of 30+ narrow matplotlib columns
+        made the text overlap and become unreadable regardless of font size.
+        Plotly's hover tooltip shows the exact raw value instead, so no
+        on-cell text is needed at all.
+        """
         weekly = self.weekly_load()
         if weekly.empty:
             return None
 
         metrics = [f"{cat}_total_distance_m" for cat in MATCH_CATEGORIES] + ["total_calories", "total_total_distance_m"]
         metrics = [m for m in metrics if m in weekly.columns]
-        heatmap_data = weekly[["week", *metrics]].set_index("week")
-        heatmap_data = heatmap_data / heatmap_data.max().replace(0, 1)
-        heatmap_data.columns = [_humanize_short(c) for c in heatmap_data.columns]
+        raw = weekly[["week", *metrics]].set_index("week")
+        normalized = raw / raw.max().replace(0, 1)
+        row_labels = [_humanize_short(c) for c in raw.columns]
 
-        fig, ax = plt.subplots(figsize=(12, 6))
-        sns.heatmap(heatmap_data.T, annot=True, fmt=".2f", cmap="YlOrRd", cbar_kws={"label": "Normalized Load"}, ax=ax)
-        ax.set_title("Weekly Load Heatmap (Normalized)", fontsize=14, fontweight="bold")
-        ax.set_xlabel("Week")
-        fig.tight_layout()
+        fig = go.Figure(
+            go.Heatmap(
+                z=normalized.T.to_numpy(),
+                x=raw.index.astype(str),
+                y=row_labels,
+                customdata=raw.T.round(1).to_numpy(),
+                colorscale="YlOrRd",
+                colorbar={"title": "Normalized"},
+                hovertemplate="Week %{x}<br>%{y}: %{customdata}<extra></extra>",
+            )
+        )
+        fig.update_layout(
+            title="Weekly Load Heatmap (color = normalized load; hover for the raw value)",
+            xaxis_title="Week",
+            xaxis={"type": "category"},
+            margin={"l": 140, "r": 20, "t": 50, "b": 40},
+            height=320,
+        )
         return fig
 
     def plot_intensity_radar(self):
