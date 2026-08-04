@@ -62,6 +62,30 @@ def acwr_gauge(value: float) -> go.Figure:
     return gauge_figure(value, "ACWR (Injury Risk)", min_val=0, max_val=2.0, zones=zones, target=1.0)
 
 
+def monotony_gauge(value: float) -> go.Figure:
+    """Foster (1998) Training Monotony. ~2.0+ combined with a high weekly load
+    is a commonly cited caution point, not a hard threshold — see
+    ``docs/load_monitoring.md``.
+    """
+    zones = [
+        (0.0, 1.0, RISK_COLORS["good"]),
+        (1.0, 2.0, RISK_COLORS["good"]),
+        (2.0, 3.0, RISK_COLORS["elevated"]),
+        (3.0, 4.0, RISK_COLORS["high"]),
+    ]
+    return gauge_figure(value, "Training Monotony", min_val=0, max_val=4.0, zones=zones, target=2.0)
+
+
+def strain_gauge(value: float, typical: float) -> go.Figure:
+    """Foster (1998) Training Strain (weekly load x monotony). No universal
+    absolute scale exists for strain — it's judged relative to an athlete's
+    own history, so this gauge scales to ``typical`` (e.g. a recent median)
+    rather than a fixed range, with no colored risk zones.
+    """
+    ceiling = max(typical * 2.0, value * 1.1 if value else 0, 1.0)
+    return gauge_figure(value, "Training Strain", min_val=0, max_val=ceiling, zones=None, target=typical)
+
+
 def quality_gauge(value: float) -> go.Figure:
     zones = [(0, 60, RISK_COLORS["high"]), (60, 80, RISK_COLORS["elevated"]), (80, 100, RISK_COLORS["good"])]
     return gauge_figure(value, "Quality Score", min_val=0, max_val=100, zones=zones)

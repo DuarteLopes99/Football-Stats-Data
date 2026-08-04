@@ -4,8 +4,6 @@ import pandas as pd
 from football_stats.gps.skillcorner_metrics import (
     add_intensity_ratios,
     add_per90_columns,
-    classify_acwr,
-    compute_acwr,
     percentile_rank,
     robust_top_speed,
 )
@@ -68,25 +66,3 @@ def test_percentile_rank():
     assert percentile_rank(series, 10) == 0.0  # nothing below the minimum
     assert percentile_rank(series, 50) == 80.0  # 4 of 5 values are below it
     assert pd.isna(percentile_rank(series, None))
-
-
-def test_compute_acwr_matches_hand_calculated_ratio():
-    # 7 days at 1000/day (chronic period), then a sudden acute week at 2000/day.
-    dates = pd.date_range("2025-09-01", periods=14, freq="D")
-    loads = [1000] * 7 + [2000] * 7
-    df = pd.DataFrame({"date": dates, "total_distance_m": loads})
-
-    acwr = compute_acwr(df, acute_days=7, chronic_days=14)
-    latest = acwr.iloc[-1]
-
-    # acute (last 7 days) = 2000/day; chronic (all 14 days) = 1500/day average -> ratio = 2000/1500
-    assert latest == round(2000 / 1500, 2)
-    assert classify_acwr(latest) == "Elevated Risk"
-
-
-def test_classify_acwr_zones():
-    assert classify_acwr(0.5) == "Undertrained"
-    assert classify_acwr(1.0) == "Optimal"
-    assert classify_acwr(1.4) == "Elevated Risk"
-    assert classify_acwr(1.8) == "High Risk"
-    assert classify_acwr(float("nan")) == "Unknown"

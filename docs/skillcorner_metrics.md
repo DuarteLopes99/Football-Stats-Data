@@ -69,27 +69,13 @@ If this repo ever ingests raw point-level GPS traces instead of pre-aggregated
 per-session rows, a literal PSV-99 (99th percentile of speed samples within
 one session) would become directly implementable and should replace this.
 
-## What's general sports science, not SkillCorner
+## General sports science lives elsewhere, on purpose
 
-**`compute_acwr()`** / **`classify_acwr()`** — the Acute:Chronic Workload
-Ratio (Gabbett, T.J., 2016, *"The training—injury prevention paradox: should
-athletes be training smarter *and* harder?"*, British Journal of Sports
-Medicine). 7-day rolling load ÷ 28-day rolling average load (scaled to a
-7-day window so the ratio is unitless). Zones used here follow the commonly
-cited Gabbett thresholds:
-
-| ACWR | Zone |
-|---|---|
-| `< 0.8` | Undertrained |
-| `0.8 – 1.3` | Optimal |
-| `1.3 – 1.5` | Elevated Risk |
-| `> 1.5` | High Risk |
-
-This is included because it's the standard injury-risk indicator that
-session-load GPS data like this is built for — not because SkillCorner
-invented it. SkillCorner (and most physical-data providers) discuss workload
-management in similar terms, but ACWR itself predates and is independent of
-them.
+ACWR, Training Monotony, and Training Strain are **not** SkillCorner metrics —
+they used to live in this module (mislabeling them as SkillCorner-adjacent by
+association), and have since moved to `gps/load_monitoring.py`, with their own
+attribution ledger in **`docs/load_monitoring.md`**. Nothing SkillCorner-sourced
+was removed from this module by that move.
 
 ## Gauges/meters
 
@@ -98,9 +84,10 @@ Not a SkillCorner chart type — their standard plots
 table-based. Gauges were a separate, explicit ask; `gps/gauges.py` builds them
 with `plotly.graph_objects.Indicator` (`mode="gauge+number"`), since
 matplotlib has no clean equivalent and Streamlit has first-class
-`st.plotly_chart` support. Five gauges live in the Performance Insights tab:
-ACWR, Quality Score, Robust Top Speed (vs. personal best), a percentile-rank
-gauge (pick the metric), and a High-Speed % intensity gauge.
+`st.plotly_chart` support. The Performance Insights tab groups them into
+**Load monitoring** (ACWR, Monotony, Strain — see `docs/load_monitoring.md`)
+and **Form** (Quality Score, Robust Top Speed), plus a percentile-rank gauge
+and High-Speed%/Sprint% intensity gauges for the latest session.
 
 ## Sources
 

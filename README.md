@@ -16,7 +16,8 @@ analysis logic lives in reusable functions, not only inside notebook cells.
 [`docs/season_prediction.md`](docs/season_prediction.md) ·
 [`docs/gps_analysis.md`](docs/gps_analysis.md) ·
 [`docs/skillcorner_metrics.md`](docs/skillcorner_metrics.md) ·
-[`docs/position_baselines.md`](docs/position_baselines.md)
+[`docs/position_baselines.md`](docs/position_baselines.md) ·
+[`docs/load_monitoring.md`](docs/load_monitoring.md)
 
 ## Setup
 
@@ -32,8 +33,26 @@ pip install -e .
 ```bash
 streamlit run dashboards/season_dashboard.py   # league table + Monte Carlo prediction
 streamlit run dashboards/gps_dashboard.py      # GPS trends + add-session form
-pytest tests/                                   # 30 tests, ~2.5s
+pytest tests/                                   # 35 tests, ~2.5s
 ```
+
+## Regenerating `gps_sessions.csv` from a new Excel export
+
+```bash
+python3 -c "
+from football_stats.gps.data_store import build_from_excel, save_sessions
+sessions = build_from_excel('/Users/enlt-dlopes/Documents/Dev_Notebooks/StatsSports/_archive/SATS_Football_GPS_Advanced.xlsx')
+save_sessions(sessions)
+print(f'Wrote {len(sessions)} sessions to data/gps/gps_sessions.csv')
+"
+```
+
+The spreadsheet needs the same `Jogos`/`Treinos` sheet shape as the original
+`SATS_Football_GPS_Advanced.xlsx` (now in `StatsSports/_archive/`). **This
+overwrites `data/gps/gps_sessions.csv` entirely, it doesn't merge** — any
+sessions added since via the dashboard's "Add Session" form only exist in the
+CSV, not in the spreadsheet, and will be lost unless you've added them to the
+spreadsheet too.
 
 ## Repository layout
 
@@ -86,9 +105,12 @@ Football-Stats-Data/
   [`docs/skillcorner_metrics.md`](docs/skillcorner_metrics.md) first.** Only
   per-90 normalization and percentile-based comparison are directly borrowed
   from their actual open-source toolkit; `robust_top_speed` is explicitly an
-  *adaptation* of PSV-99, not the metric itself; ACWR is general sports
-  science (Gabbett 2016), not theirs. Keep that distinction when extending
-  `gps/skillcorner_metrics.py`.
+  *adaptation* of PSV-99, not the metric itself. ACWR, Training Monotony, and
+  Training Strain are general sports science (Gabbett 2016; Foster 1998), not
+  SkillCorner's — they live in `gps/load_monitoring.py`, not
+  `gps/skillcorner_metrics.py`. See
+  [`docs/load_monitoring.md`](docs/load_monitoring.md) before extending either
+  module.
 - **`gps/position_baselines.py` replaced the old spreadsheet baseline** (a
   single unsourced set of numbers) with position-specific figures from
   published research. Training baselines are *estimated* from the match

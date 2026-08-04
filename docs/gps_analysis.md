@@ -228,16 +228,18 @@ unreadable as a table header. `gps/formatting.py` centralizes the fix:
   per float column, so numbers render with fixed, short decimal places instead
   of long raw floats.
 
-## 7a. Performance Insights: per-90, percentiles, ACWR, gauges
+## 7a. Performance Insights: per-90, percentiles, load monitoring, gauges
 
-`gps/skillcorner_metrics.py` and `gps/gauges.py` power the dashboard's
-**Performance Insights** tab — per-90-minute normalization, percentile-rank
-comparison against the player's own history, a PSV-99-inspired "robust top
-speed," and the Acute:Chronic Workload Ratio, each with a Plotly gauge.
-**Full attribution writeup (what's genuinely SkillCorner methodology, what's
-adapted, what's general sports science) lives in
-[`docs/skillcorner_metrics.md`](skillcorner_metrics.md) — read it before
-extending this module or calling something "SkillCorner" in a chart label.**
+`gps/skillcorner_metrics.py`, `gps/load_monitoring.py`, and `gps/gauges.py`
+together power the dashboard's **Performance Insights** tab — per-90-minute
+normalization, percentile-rank comparison against the player's own history, a
+PSV-99-inspired "robust top speed," and general sports-science load
+monitoring (Acute:Chronic Workload Ratio, Training Monotony, Training
+Strain), each with a Plotly gauge. **Full attribution writeups (what's
+genuinely SkillCorner methodology vs. adapted vs. general sports science)
+live in [`docs/skillcorner_metrics.md`](skillcorner_metrics.md) and
+[`docs/load_monitoring.md`](load_monitoring.md) — read them before extending
+these modules or calling something "SkillCorner" in a chart label.**
 
 **Apply both right before rendering, never to data you're about to compute
 with** — `humanize_columns` renames columns, so a renamed frame can't be fed
@@ -272,8 +274,15 @@ date range. Tabs:
   chart and quality-score line chart. **Always covers every season**,
   independent of the sidebar's Season selector — this is the career-wide view
   (see §5).
-- **Performance Insights** — ACWR, Quality Score, and Robust Top Speed gauges;
-  a percentile-rank gauge for a metric you pick; a High-Speed % intensity
-  gauge; a per-90-minute table; and a "Methodology" expander with the
-  SkillCorner attribution breakdown (see §7a).
+- **Performance Insights** — a **Load monitoring** row (ACWR, Training
+  Monotony, Training Strain gauges — general sports science, not
+  SkillCorner) and a **Form** row (Quality Score, Robust Top Speed gauges);
+  a percentile-rank gauge for a metric you pick, alongside High-Speed % and
+  Sprint % intensity gauges for the latest session; a per-90-minute table;
+  and a "Methodology" expander with the full SkillCorner-vs-general-sports-
+  science attribution breakdown (see §7a). Captions on this tab spell out
+  that everything here shares the sidebar's Season/Match category/Date range
+  scope, and that the percentile gauge ranks the latest session against that
+  same in-scope history — not an external or positional benchmark (that's
+  the Baseline tab instead).
 - **Add Session** — the append-a-session form.

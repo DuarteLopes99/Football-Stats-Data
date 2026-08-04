@@ -15,9 +15,11 @@ spelled out in ``docs/skillcorner_metrics.md`` — the short version:
   metric: we only have session-level maxes, so this is a rolling percentile
   over recent *sessions*, not raw samples. Deliberately non-99th-percentile —
   see the function docstring.
-- **``compute_acwr``** (Acute:Chronic Workload Ratio) is general sports science
-  (Gabbett, 2016), not a SkillCorner metric — included because it's the
-  standard injury-risk indicator this kind of data is built for.
+
+General sports-science load-monitoring metrics (ACWR, Training Monotony &
+Strain) live in ``gps/load_monitoring.py`` instead — they aren't SkillCorner's,
+so they don't belong in a module named after them. See
+``docs/load_monitoring.md``.
 """
 
 from __future__ import annotations
@@ -33,13 +35,6 @@ PER90_METRICS = [
     "decelerations",
     "sprints_total",
     "calories",
-]
-
-ACWR_ZONES = [
-    (0.0, 0.8, "Undertrained"),
-    (0.8, 1.3, "Optimal"),
-    (1.3, 1.5, "Elevated Risk"),
-    (1.5, float("inf"), "High Risk"),
 ]
 
 
@@ -109,32 +104,3 @@ def percentile_rank(series: pd.Series, value: float) -> float:
     if clean.empty or pd.isna(value):
         return float("nan")
     return round(float((clean < value).mean()) * 100, 1)
-
-
-def classify_acwr(value: float) -> str:
-    """Gabbett (2016) Acute:Chronic Workload Ratio risk zone for one ratio value."""
-    if pd.isna(value):
-        return "Unknown"
-    for low, high, label in ACWR_ZONES:
-        if low <= value < high:
-            return label
-    return "High Risk"
-
-
-def compute_acwr(df: pd.DataFrame, load_col: str = "total_distance_m", acute_days: int = 7, chronic_days: int = 28) -> pd.Series:
-    """Daily Acute:Chronic Workload Ratio: rolling `acute_days`-sum ÷ rolling
-    `chronic_days`-average (scaled to the same `acute_days` window so the ratio
-    is unitless). General sports-science injury-risk indicator (Gabbett, 2016)
-    — not a SkillCorner metric.
-
-    Sessions are resampled to a daily sum first (days with no session = 0
-    load), since ``load_col`` is per-session, not per-day.
-    """
-    dates = pd.to_datetime(df["date"])
-    load = pd.to_numeric(df[load_col], errors="coerce").fillna(0)
-    daily = pd.Series(load.to_numpy(), index=dates).sort_index()
-    daily = daily.groupby(daily.index).sum().resample("D").sum()
-
-    acute = daily.rolling(acute_days, min_periods=1).sum()
-    chronic = daily.rolling(chronic_days, min_periods=1).mean() * acute_days
-    return (acute / chronic.replace(0, np.nan)).round(2)

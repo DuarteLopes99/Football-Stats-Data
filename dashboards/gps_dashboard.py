@@ -17,15 +17,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from football_stats.gps.analyzer import MATCH_CATEGORIES, PerformanceAnalyzer, add_match_category_column  # noqa: E402
 from football_stats.gps.data_store import DEFAULT_SESSIONS_PATH, append_session, load_sessions  # noqa: E402
 from football_stats.gps.formatting import DISPLAY_LABELS, MATCH_CATEGORY_LABELS, humanize_columns, numeric_column_config  # noqa: E402
-from football_stats.gps.gauges import acwr_gauge, intensity_gauge, percentile_gauge, quality_gauge, top_speed_gauge  # noqa: E402
+from football_stats.gps.gauges import (  # noqa: E402
+    acwr_gauge,
+    intensity_gauge,
+    monotony_gauge,
+    percentile_gauge,
+    quality_gauge,
+    strain_gauge,
+    top_speed_gauge,
+)
+from football_stats.gps.load_monitoring import classify_acwr, classify_monotony, compute_acwr, weekly_monotony_and_strain  # noqa: E402
 from football_stats.gps.position_baselines import POSITION_LABELS, POSITIONS  # noqa: E402
 from football_stats.gps.seasons import add_season_column  # noqa: E402
 from football_stats.gps.skillcorner_metrics import (  # noqa: E402
     PER90_METRICS,
     add_intensity_ratios,
     add_per90_columns,
-    classify_acwr,
-    compute_acwr,
     percentile_rank,
     robust_top_speed,
 )
@@ -277,14 +284,20 @@ def main() -> None:
         st.subheader("Performance Insights")
         st.caption(
             "Per-90 normalization and percentile comparison are adapted from SkillCorner's physical-data "
-            "methodology; ACWR is general sports science, not SkillCorner-specific. See the Methodology "
-            "section below for exactly what's borrowed vs. adapted."
+            "methodology; ACWR/Monotony/Strain are general sports science, not SkillCorner-specific. See "
+            "the Methodology section below for exactly what's borrowed vs. adapted vs. general."
+        )
+        st.caption(
+            "Everything on this tab uses the **same scope as the sidebar filters above** — Season, Match "
+            "category, and Date range. Switching those changes every gauge and table here too."
         )
 
         scope = analyzer.sessions.sort_values("date")
-        gcol1, gcol2, gcol3 = st.columns(3)
 
-        with gcol1:
+        st.markdown("**Load monitoring**")
+        lcol1, lcol2, lcol3 = st.columns(3)
+
+        with lcol1:
             acwr_series = compute_acwr(scope).dropna()
             if not acwr_series.empty:
                 latest_acwr = acwr_series.iloc[-1]
@@ -293,7 +306,28 @@ def main() -> None:
             else:
                 st.info("Not enough data for ACWR yet.")
 
-        with gcol2:
+        weekly = weekly_monotony_and_strain(scope).dropna(subset=["monotony"])
+        with lcol2:
+            if not weekly.empty:
+                latest_monotony = weekly.iloc[-1]["monotony"]
+                st.plotly_chart(monotony_gauge(latest_monotony), use_container_width=True)
+                st.caption(f"Zone: **{classify_monotony(latest_monotony)}** — mean daily load ÷ its SD, this week.")
+            else:
+                st.info("Not enough data for training monotony yet (need 2+ sessions in a week).")
+        with lcol3:
+            if not weekly.empty:
+                latest_strain = weekly.iloc[-1]["strain"]
+                typical_strain = weekly["strain"].median()
+                st.plotly_chart(strain_gauge(latest_strain, typical_strain), use_container_width=True)
+                st.caption("Weekly load × monotony, vs. your own median week (black line) — no universal scale exists for this one.")
+            else:
+                st.info("Not enough data for training strain yet.")
+
+        st.markdown("---")
+        st.markdown("**Form**")
+        gcol1, gcol2 = st.columns(2)
+
+        with gcol1:
             quality = analyzer.monthly_quality_metric()
             if not quality.empty:
                 st.plotly_chart(quality_gauge(quality.iloc[-1]["combined_quality"]), use_container_width=True)
@@ -301,7 +335,7 @@ def main() -> None:
             else:
                 st.info("Not enough data for a quality score yet.")
 
-        with gcol3:
+        with gcol2:
             speeds = robust_top_speed(scope).dropna()
             if not speeds.empty:
                 personal_best = scope["top_speed_kmh"].max()
@@ -312,7 +346,15 @@ def main() -> None:
 
         st.markdown("---")
         st.markdown("**Latest session, ranked against the current filters' history**")
-        pcol1, pcol2, pcol3 = st.columns(3)
+        st.caption(
+            "\"Current filters\" = the Season / Match category / Date range picked in the sidebar — the same "
+            "`scope` this whole tab uses, not a separate filter. **How the percentile works**: it's the share "
+            "of sessions *within that scope* whose value was lower than your latest session's — e.g. 80% means "
+            "4 out of 5 sessions in the current scope had less of that metric than your latest one did. It's "
+            "relative to your own recorded history in the current scope, not to any external/positional "
+            "benchmark (that comparison lives in the Baseline tab instead)."
+        )
+        pcol1, pcol2, pcol3, pcol4 = st.columns(4)
         rank_metric_options = ["total_distance_m", "sprint_distance_m", "high_speed_distance_m", "top_speed_kmh"]
         with pcol1:
             rank_metric = st.selectbox("Metric", rank_metric_options, format_func=_metric_label, key="percentile_metric")
@@ -321,10 +363,13 @@ def main() -> None:
             rank = percentile_rank(scope[rank_metric], latest_row.iloc[0][rank_metric])
             with pcol2:
                 st.plotly_chart(percentile_gauge(rank, f"{_metric_label(rank_metric)} Percentile"), use_container_width=True)
+            intensity = add_intensity_ratios(scope).iloc[-5:]
             with pcol3:
-                intensity = add_intensity_ratios(scope).iloc[-5:]
                 avg_hi_pct = intensity["high_speed_pct"].mean()
                 st.plotly_chart(intensity_gauge(avg_hi_pct, "High-Speed % (last 5)", max_val=max(avg_hi_pct * 2, 10)), use_container_width=True)
+            with pcol4:
+                avg_sprint_pct = intensity["sprint_pct"].mean()
+                st.plotly_chart(intensity_gauge(avg_sprint_pct, "Sprint % (last 5)", max_val=max(avg_sprint_pct * 2, 10)), use_container_width=True)
         else:
             st.info(f"No sessions with {_metric_label(rank_metric)} recorded yet.")
 
@@ -342,7 +387,8 @@ their open-source physical-data toolkit):
 - **Per-90 normalization** — `add_standard_metrics()` in `skillcorner_physical_utils.py` normalizes distance/accel/decel/sprint
   counts per 90 minutes so sessions of different lengths are comparable. Same idea, applied above.
 - **Percentile-based comparison** — their `summary_table.py`/`table_grid.py` color tables by percentile rather than raw value.
-  We have no peer group (single player), so this ranks a session against the *player's own* history instead.
+  We have no peer group (single player), so this ranks a session against the *player's own* history instead — see the
+  explanation above the percentile gauge for exactly how that's computed.
 - **HI/Sprint thresholds** — SkillCorner defines High-Intensity distance as **>19.8 km/h** and Sprint distance as
   **>25.2 km/h**. We don't recompute these (no raw speed stream to threshold), but this repo's `high_speed_distance_m`/
   `sprint_distance_m` categories already match that convention.
@@ -353,12 +399,18 @@ their open-source physical-data toolkit):
   a ~10-session window the 99th percentile would just equal "the max of the window" (no noise-robustness gained), so this
   uses the **95th percentile of the last 10 sessions'** top speeds instead. Different granularity, same spirit.
 
-**General sports science, not SkillCorner-specific:**
+**General sports science, not SkillCorner-specific** (moved to `gps/load_monitoring.py`):
 - **ACWR (Acute:Chronic Workload Ratio)** — Gabbett (2016). 7-day load ÷ 28-day average load. `<0.8` undertrained,
-  `0.8–1.3` optimal, `1.3–1.5` elevated risk, `>1.5` high risk. Included because it's the standard injury-risk indicator
-  this kind of session-load data is built for, not because SkillCorner invented it.
+  `0.8–1.3` optimal, `1.3–1.5` elevated risk, `>1.5` high risk.
+- **Training Monotony & Strain** — Foster (1998). Monotony = mean daily load ÷ its standard deviation over the week
+  (high monotony = every day looks the same, no easier days); Strain = weekly load × monotony (a big week that was
+  *also* monotonous — the combination linked to overtraining risk more than either figure alone). ~2.0+ monotony with
+  a high weekly load is a commonly cited caution point, not a validated hard threshold. Strain has no fixed scale, so
+  its gauge is relative to your own median week instead of fixed colored zones.
+- Both use `total_distance_m` as the load input, not session-RPE (the field's more standard input) — this dataset
+  doesn't collect a subjective-exertion rating. A real substitution, disclosed rather than hidden.
 
-Full writeup with source links: `docs/skillcorner_metrics.md` in the repo.
+Full writeup with source links: `docs/skillcorner_metrics.md` and `docs/load_monitoring.md` in the repo.
                 """
             )
 
