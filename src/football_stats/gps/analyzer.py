@@ -7,37 +7,30 @@ and compared "training vs matches" as if every match were the same. Here:
 - Every session lives in one table (see ``gps.data_store``), and a derived
   ``match_category`` column splits it three ways — ``"training"``,
   ``"official_match"`` (Campeonato/Taça) and ``"practice_match"`` (a "Jogo
-  Treino" friendly, which is a `session_kind == "game"` row but not a real
-  competitive fixture) — so lumping a friendly into official-match stats can't
+  Treino" friendly) — so lumping a friendly into official-match stats can't
   happen silently.
-- Every session also gets a ``season`` label (``gps.seasons.season_label``, a
-  Jul-Jun football season), and monthly aggregation groups on the actual
-  calendar date (``pd.Grouper(freq="MS")``) instead of a bare 1-12 month
-  number, so a season that crosses a calendar-year boundary (Sep 2025 -> May
-  2026) still sorts and displays chronologically instead of Jan-before-Sep.
+- Every session also gets a ``season`` label, and monthly aggregation groups on
+  the real calendar month, so a season crossing a year boundary still sorts
+  chronologically.
 
-Plot methods return a ``matplotlib.figure.Figure`` (for ``st.pyplot(fig)``)
-instead of calling ``plt.show()`` — except ``plot_weekly_load_heatmap``, which
-returns a ``plotly.graph_objects.Figure`` (for ``st.plotly_chart(fig)``): a
-season can span 30+ weeks, and cramming an on-cell number into that many
-narrow matplotlib columns made the text unreadable regardless of font size.
-Plotly's hover tooltip replaces the on-cell annotation instead.
+Every plot method returns a ``plotly.graph_objects.Figure`` styled with the
+report's dark template (``gps.charts``) — the matplotlib/seaborn charts are gone.
 """
 
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import seaborn as sns
+from plotly.subplots import make_subplots
 
+from football_stats.gps import config as cfg
+from football_stats.gps.charts import TEMPLATE
+from football_stats.gps.cleaning import match_category
 from football_stats.gps.formatting import DISPLAY_LABELS, MATCH_CATEGORY_LABELS
+from football_stats.gps.match_link import official_minutes
 from football_stats.gps.position_baselines import get_baseline
 from football_stats.gps.seasons import add_season_column
-from football_stats.gps.skillcorner_metrics import add_per90_columns
-
-sns.set_style("whitegrid")
 
 NUMERIC_METRICS = [
     "duration_min",
@@ -53,13 +46,11 @@ NUMERIC_METRICS = [
 ]
 
 BASELINE_METRICS = ["total_distance_m", "sprint_distance_m", "high_speed_distance_m", "top_speed_kmh", "accelerations", "decelerations"]
-"""Compared per-90-minute (via ``skillcorner_metrics.add_per90_columns``) against a
-position baseline, except ``top_speed_kmh`` — a peak, not a cumulative rate — which
-is compared as a session max against the baseline's reference peak speed."""
+"""Compared per 90 minutes against a position baseline, except ``top_speed_kmh``
+— a peak, not a cumulative rate — which is compared as the scope's session max."""
 
-MATCH_CATEGORIES = ["training", "official_match", "practice_match"]
-CATEGORY_COLORS = {"training": "#2ecc71", "official_match": "#e74c3c", "practice_match": "#f39c12"}
-CATEGORY_MARKERS = {"training": "o", "official_match": "s", "practice_match": "^"}
+MATCH_CATEGORIES = cfg.SESSION_CATEGORIES
+CATEGORY_COLORS = cfg.SESSION_COLORS
 
 _QUALITY_WEIGHTS_DEFAULT = {
     "total_distance_m": 0.25,
@@ -77,19 +68,9 @@ def _label(key: str) -> str:
 
 
 def add_match_category_column(df: pd.DataFrame) -> pd.DataFrame:
-    """Add a ``match_category`` column: "training" / "official_match" / "practice_match".
-
-    Public so callers (the dashboard) can filter on it before ever constructing
-    a ``PerformanceAnalyzer`` — the same pattern already used for `date`/`season`.
-    """
+    """Add a ``match_category`` column: "training" / "official_match" / "practice_match"."""
     df = df.copy()
-    competition_type = df.get("competition_type", pd.Series(index=df.index))
-    is_official = competition_type.isin(["Campeonato", "Taça"])
-    df["match_category"] = np.select(
-        [df["session_kind"] == "training", is_official],
-        ["training", "official_match"],
-        default="practice_match",
-    )
+    df["match_category"] = match_category(df)
     return df
 
 
@@ -99,6 +80,10 @@ class PerformanceAnalyzer:
         self.sessions["date"] = pd.to_datetime(self.sessions["date"])
         for col in NUMERIC_METRICS:
             self.sessions[col] = pd.to_numeric(self.sessions[col], errors="coerce")
+        # The export's own distance_per_min disagrees with distance ÷ duration on
+        # several rows; recompute it so every chart and score uses one definition.
+        duration = self.sessions["duration_min"]
+        self.sessions["distance_per_min"] = (self.sessions["total_distance_m"] / duration.where(duration > 0)).round(2)
         self.sessions = add_match_category_column(self.sessions)
         self.sessions = add_season_column(self.sessions)
 
@@ -115,12 +100,8 @@ class PerformanceAnalyzer:
     # --------------------------------------------------------------- #
 
     def monthly_summary(self, category: str, year: int | None = None) -> pd.DataFrame:
-        """Chronological monthly aggregation for one match category.
-
-        Grouped on the real calendar month (``pd.Grouper(freq="MS")``), not the
-        bare 1-12 month number, so a season spanning a calendar-year boundary
-        (or multiple seasons at once) still sorts and reads chronologically.
-        """
+        """Chronological monthly aggregation for one match category, grouped on
+        the real calendar month so it sorts correctly across a year boundary."""
         df = self._filter(category, year=year)
         if df.empty:
             return pd.DataFrame()
@@ -142,9 +123,7 @@ class PerformanceAnalyzer:
         summary.columns = ["_".join(col).strip() for col in summary.columns.values]
         summary = summary.reset_index()
 
-        # pd.Grouper(freq="MS") pads gaps between the first and last session with
-        # empty months — drop those (by actual row count, not duration_min_count,
-        # since a real session missing just its duration shouldn't disappear too).
+        # pd.Grouper pads gaps with empty months — drop those by row count.
         session_counts = grouped.size().reset_index(name="_session_count")
         summary = summary.merge(session_counts, on="date")
         summary = summary[summary["_session_count"] > 0].drop(columns="_session_count")
@@ -153,21 +132,24 @@ class PerformanceAnalyzer:
         return summary.reset_index(drop=True)
 
     def compare_to_baseline(self, category: str, position: str, month: int | None = None) -> pd.DataFrame:
-        """Current performance vs. a researched, position-specific baseline
-        (see ``gps.position_baselines`` — sourced from published studies, not
-        the old spreadsheet's unsourced flat baseline).
+        """Current performance vs. a researched, position-specific baseline.
 
-        Every metric except ``top_speed_kmh`` is compared **per 90 minutes
-        played** (via ``add_per90_columns``), since baselines are per-full-match/
-        session figures and our sessions vary in length — comparing raw
-        session totals against a per-90 baseline would unfairly penalize a
-        60-minute appearance. ``top_speed_kmh`` is a peak, not a cumulative
-        rate, so it's compared as this scope's session max instead.
+        Every metric except ``top_speed_kmh`` is compared **per 90 minutes**.
+        For matches the denominator is the match-sheet minutes (falling back to
+        GPS runtime) and appearances under ``SHORT_APPEARANCE_MIN`` are left out:
+        a cameo's per-90 rate is extrapolation, and a few of them used to put
+        sprint distance at +264 % of the baseline. ``top_speed_kmh`` is compared
+        as this scope's session max.
         """
         df = self._filter(category, month)
         if df.empty:
             return pd.DataFrame()
-        df90 = add_per90_columns(df)
+        df = official_minutes(df)
+        minutes = df["official_minutes"]
+        if category != cfg.TRAINING:
+            df = df[minutes >= cfg.SHORT_APPEARANCE_MIN]
+            minutes = df["official_minutes"]
+        safe_minutes = minutes.where(minutes > 0)
         baseline = get_baseline(category, position)
 
         rows = []
@@ -175,7 +157,7 @@ class PerformanceAnalyzer:
             if col == "top_speed_kmh":
                 current = df[col].max()
             else:
-                current = df90[f"{col}_per90"].mean()
+                current = (df[col] / safe_minutes * 90).mean()
             ref = baseline.get(col)
             row = {"Metric": _label(col), "Current": round(current, 2) if pd.notna(current) else None, "Baseline": ref}
             if ref:
@@ -185,14 +167,12 @@ class PerformanceAnalyzer:
         return pd.DataFrame(rows)
 
     def average_minutes(self, category: str) -> float:
-        """Average ``duration_min`` for one match category — context for the
-        per-90 baseline comparison (a session's actual length vs. the 90-minute
-        basis the baseline is expressed in).
-        """
+        """Average ``duration_min`` for one match category (sessions with minutes only)."""
         df = self._filter(category)
-        if df.empty:
+        minutes = df["duration_min"].where(df["duration_min"] > 0)
+        if minutes.dropna().empty:
             return float("nan")
-        return round(float(df["duration_min"].mean()), 1)
+        return round(float(minutes.mean()), 1)
 
     def session_type_analysis(self, category: str) -> pd.DataFrame:
         df = self._filter(category)
@@ -218,12 +198,10 @@ class PerformanceAnalyzer:
         return stats.reset_index()
 
     def weekly_load(self, week: int | None = None) -> pd.DataFrame:
-        """Weekly load split by match category.
-
-        ``week`` is a season-relative counter in the source data (it restarts
-        at 1 each season), so this only produces meaningful totals when
-        ``self.sessions`` is already scoped to a single season — the dashboard
-        enforces that via its season selector before constructing the analyzer.
+        """Weekly load split by match category, on Sunday→Saturday calendar weeks
+        (``gps.config.WEEK_FREQ``) — computed from the dates, not the hand-typed
+        ``week`` column, so it never merges two seasons' "week 5" together.
+        ``week`` filters by that column for backward compatibility.
         """
         df = self.sessions.copy()
         if week is not None:
@@ -232,7 +210,8 @@ class PerformanceAnalyzer:
             return pd.DataFrame()
 
         metrics = ["duration_min", "total_distance_m", "sprint_distance_m", "high_speed_distance_m", "calories"]
-        pivot = df.groupby(["week", "match_category"])[metrics].sum().unstack("match_category", fill_value=0)
+        df["week_start"] = (df["date"] - pd.to_timedelta((df["date"].dt.dayofweek + 1) % 7, unit="D")).dt.normalize()
+        pivot = df.groupby(["week_start", "match_category"])[metrics].sum().unstack("match_category", fill_value=0)
         pivot.columns = [f"{category}_{metric}" for metric, category in pivot.columns]
         pivot = pivot.reset_index()
 
@@ -243,13 +222,14 @@ class PerformanceAnalyzer:
                     pivot[col] = 0.0
             pivot[f"total_{metric}"] = sum(pivot[f"{category}_{metric}"] for category in MATCH_CATEGORIES)
 
-        pivot["week"] = pivot["week"].astype(int)
-        return pivot.round(2)
+        pivot.insert(0, "week", pivot["week_start"].dt.strftime("%d %b %Y"))
+        return pivot.drop(columns="week_start").round(2)
 
     def starter_vs_substitute(self) -> pd.DataFrame:
-        """Starter vs substitute performance across all games (official + practice)."""
+        """Starter vs substitute across all games that were actually played —
+        an unused substitute's 0 minutes would otherwise drag every sub mean down."""
         df = self.sessions[self.sessions["session_kind"] == "game"]
-        df = df[df["was_starter"].notna()]
+        df = df[df["was_starter"].notna() & (df["duration_min"] > 0)]
         if df.empty:
             return pd.DataFrame()
         stats = df.groupby("was_starter").agg(
@@ -263,21 +243,20 @@ class PerformanceAnalyzer:
         ).round(2)
         stats.columns = ["_".join(col).strip() for col in stats.columns.values]
         stats = stats.reset_index()
-        stats["was_starter"] = stats["was_starter"].map({True: "Starter", False: "Substitute"})
+        stats["was_starter"] = stats["was_starter"].map({True: "Starter", False: "Substitute", "True": "Starter", "False": "Substitute"})
         return stats
 
     QUALITY_COLUMNS = ["date", "month_label", "training_quality", "match_quality", "combined_quality"]
 
     def monthly_quality_metric(self, weights: dict[str, float] | None = None) -> pd.DataFrame:
         """Composite 0-100 quality score per calendar month, blending training
-        (60%) and official-match (40%) intensity. Practice matches don't factor
-        in — they're not a reliable read on competitive readiness.
+        and official-match intensity (``QUALITY_TRAINING_WEIGHT`` /
+        ``QUALITY_MATCH_WEIGHT``). Practice matches don't factor in.
 
-        Returns an empty frame **with the expected columns** when there are no
-        sessions in scope, so callers can filter or sort it like any other
-        result. Reachable now that the dashboard's Season selector spans the
-        body-composition record too: those seasons have assessments but no GPS
-        sessions at all.
+        A month without measurable official-match data has **no** match score
+        (NaN), and its combined score is the training score alone — it used to
+        count as 0 and knock 40 % off the month (Dec 2025 read 54.8).
+        Empty-but-typed when there are no sessions in scope.
         """
         weights = weights or _QUALITY_WEIGHTS_DEFAULT
         training_monthly = self.monthly_summary("training")
@@ -302,8 +281,10 @@ class PerformanceAnalyzer:
                             if len(reference) and reference.max() > 0:
                                 score += (month_row[col] / reference.max()) * weight
                                 total_weight += weight
-                row[kind] = round((score / total_weight) * 100, 2) if total_weight else 0.0
-            row["combined_quality"] = round(0.6 * row["training_quality"] + 0.4 * row["match_quality"], 2)
+                row[kind] = round((score / total_weight) * 100, 2) if total_weight else np.nan
+            parts = [(row["training_quality"], cfg.QUALITY_TRAINING_WEIGHT), (row["match_quality"], cfg.QUALITY_MATCH_WEIGHT)]
+            parts = [(v, w) for v, w in parts if pd.notna(v)]
+            row["combined_quality"] = round(sum(v * w for v, w in parts) / sum(w for _, w in parts), 2) if parts else np.nan
             rows.append(row)
         if not rows:
             return pd.DataFrame(columns=self.QUALITY_COLUMNS)
@@ -315,15 +296,11 @@ class PerformanceAnalyzer:
     ]
 
     def season_summary(self) -> pd.DataFrame:
-        """One row per season: session counts by category, distance, peak speed, quality.
-
-        Empty-but-typed when there are no sessions in scope, for the same reason
-        as ``monthly_quality_metric``.
-        """
+        """One row per season: session counts by category, distance, peak speed
+        (any session type), quality. Empty-but-typed when nothing is in scope."""
         rows = []
         for season, group in self.sessions.groupby("season"):
             quality = PerformanceAnalyzer(group).monthly_quality_metric()
-            official = group[group["match_category"] == "official_match"]
             rows.append(
                 {
                     "season": season,
@@ -332,7 +309,7 @@ class PerformanceAnalyzer:
                     "official_matches": int((group["match_category"] == "official_match").sum()),
                     "practice_matches": int((group["match_category"] == "practice_match").sum()),
                     "total_distance_km": round(group["total_distance_m"].sum() / 1000, 1),
-                    "peak_top_speed_kmh": round(official["top_speed_kmh"].max(), 2) if not official.empty else None,
+                    "peak_top_speed_kmh": round(group["top_speed_kmh"].max(), 2) if group["top_speed_kmh"].notna().any() else None,
                     "avg_quality_score": round(quality["combined_quality"].mean(), 1) if not quality.empty else None,
                 }
             )
@@ -341,72 +318,56 @@ class PerformanceAnalyzer:
         return pd.DataFrame(rows).sort_values("season").reset_index(drop=True)
 
     # --------------------------------------------------------------- #
-    # Charts (return a Figure; caller renders with st.pyplot(fig))
+    # Charts (Plotly, dark report template)
     # --------------------------------------------------------------- #
 
-    def plot_monthly_comparison(self, metrics: list[str] | None = None):
+    def plot_monthly_comparison(self, metrics: list[str] | None = None) -> go.Figure:
         metrics = metrics or ["total_distance_m", "sprint_distance_m", "high_speed_distance_m", "calories"]
+        metrics = metrics[:4]
         monthly_by_category = {category: self.monthly_summary(category) for category in MATCH_CATEGORIES}
-
-        fig, axes = plt.subplots(2, 2, figsize=(14, 9))
-        fig.suptitle("Monthly Performance Comparison", fontsize=15, fontweight="bold")
-        axes = axes.flatten()
-
-        for idx, metric in enumerate(metrics[:4]):
-            ax = axes[idx]
+        fig = make_subplots(rows=2, cols=2, subplot_titles=[_label(m) for m in metrics], vertical_spacing=0.14)
+        for idx, metric in enumerate(metrics):
             col = f"{metric}_max" if metric == "top_speed_kmh" else f"{metric}_mean"
             for category, monthly in monthly_by_category.items():
-                if not monthly.empty and col in monthly.columns:
-                    ax.plot(
-                        monthly["date"],
-                        monthly[col],
-                        marker=CATEGORY_MARKERS[category],
-                        label=MATCH_CATEGORY_LABELS[category],
-                        color=CATEGORY_COLORS[category],
-                    )
-            ax.set_title(_label(metric), fontsize=11, fontweight="bold")
-            ax.set_xlabel("Month")
-            ax.legend(fontsize=9)
-            ax.grid(alpha=0.3)
-            ax.tick_params(axis="x", rotation=45)
-
-        fig.tight_layout()
+                if monthly.empty or col not in monthly.columns:
+                    continue
+                fig.add_trace(
+                    go.Scatter(
+                        x=monthly["date"], y=monthly[col], mode="lines+markers", name=MATCH_CATEGORY_LABELS[category],
+                        line={"color": CATEGORY_COLORS[category], "width": 2}, marker={"size": 8},
+                        legendgroup=category, showlegend=idx == 0,
+                        hovertemplate=f"%{{x|%b %Y}}<br>{_label(metric)}: %{{y:,.0f}}<extra>{MATCH_CATEGORY_LABELS[category]}</extra>",
+                    ),
+                    row=idx // 2 + 1, col=idx % 2 + 1,
+                )
+        fig.update_xaxes(tickformat="%b %y")
+        fig.update_layout(template=TEMPLATE, height=580, margin={"t": 80}, legend={"y": 1.12})
         return fig
 
-    def plot_best_worst(self, metric: str = "total_distance_m", category: str = "training", top_n: int = 5):
+    def plot_best_worst(self, metric: str = "total_distance_m", category: str = "training", top_n: int = 5) -> go.Figure:
         df = self._filter(category).dropna(subset=[metric])
+        df = df[df[metric] > 0]
         title = MATCH_CATEGORY_LABELS.get(category, category)
-
-        df_sorted = df.sort_values(metric, ascending=False)
-        best = df_sorted.head(top_n)
-        worst = df_sorted.tail(top_n).sort_values(metric)
-
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-        fig.suptitle(f"Best & Worst {title} — {_label(metric)}", fontsize=14, fontweight="bold")
-
-        for ax, data, cmap, label in ((ax1, best, plt.cm.Greens, "Best"), (ax2, worst, plt.cm.Reds, "Worst")):
-            dates = data["date"].dt.strftime("%d/%m/%y")
-            values = data[metric].values
-            colors = cmap(np.linspace(0.5, 0.9, max(len(values), 1)))
-            ax.barh(range(len(dates)), values, color=colors)
-            ax.set_yticks(range(len(dates)))
-            ax.set_yticklabels(dates)
-            ax.invert_yaxis()
-            ax.set_title(f"Top {top_n} {label}", fontsize=11, fontweight="bold")
-            for i, val in enumerate(values):
-                ax.text(val, i, f"  {val:.0f}", va="center", fontsize=9)
-
-        fig.tight_layout()
+        ordered = df.sort_values(metric, ascending=False)
+        best, worst = ordered.head(top_n), ordered.tail(top_n).sort_values(metric)
+        fig = make_subplots(rows=1, cols=2, subplot_titles=[f"Top {top_n}", f"Bottom {top_n}"], horizontal_spacing=0.18)
+        for col_idx, data in ((1, best), (2, worst)):
+            fig.add_trace(
+                go.Bar(
+                    x=data[metric], y=data["date"].dt.strftime("%d %b %y"), orientation="h",
+                    marker={"color": CATEGORY_COLORS.get(category, cfg.GAUGE["fill"]), "cornerradius": 3},
+                    text=data[metric].round(0), textposition="outside", textfont={"color": cfg.THEME["text_secondary"]},
+                    hovertemplate=f"%{{y}}: %{{x:,.1f}}<extra>{title}</extra>", showlegend=False, cliponaxis=False,
+                ),
+                row=1, col=col_idx,
+            )
+            fig.update_yaxes(autorange="reversed", type="category", row=1, col=col_idx)
+        fig.update_layout(template=TEMPLATE, height=360, margin={"t": 50})
         return fig
 
-    def plot_weekly_load_heatmap(self):
-        """Interactive Plotly heatmap — the one chart method that isn't
-        matplotlib (see the module docstring). A season can span 30+ weeks;
-        cramming an on-cell number into each of 30+ narrow matplotlib columns
-        made the text overlap and become unreadable regardless of font size.
-        Plotly's hover tooltip shows the exact raw value instead, so no
-        on-cell text is needed at all.
-        """
+    def plot_weekly_load_heatmap(self) -> go.Figure | None:
+        """Weekly load by category as a heatmap (colour = share of that row's
+        maximum; hover shows the raw value)."""
         weekly = self.weekly_load()
         if weekly.empty:
             return None
@@ -419,102 +380,92 @@ class PerformanceAnalyzer:
 
         fig = go.Figure(
             go.Heatmap(
-                z=normalized.T.to_numpy(),
-                x=raw.index.astype(str),
-                y=row_labels,
+                z=normalized.T.to_numpy(), x=raw.index.astype(str), y=row_labels,
                 customdata=raw.T.round(1).to_numpy(),
-                colorscale="YlOrRd",
-                colorbar={"title": "Normalized"},
-                hovertemplate="Week %{x}<br>%{y}: %{customdata}<extra></extra>",
+                colorscale=[[i / (len(cfg.DEMAND_SEQUENTIAL) - 1), c] for i, c in enumerate(cfg.DEMAND_SEQUENTIAL)],
+                colorbar={"title": "Share of max", "tickformat": ".0%"}, xgap=2, ygap=2,
+                hovertemplate="Week of %{x}<br>%{y}: %{customdata:,.0f}<extra></extra>",
             )
         )
+        fig.update_layout(template=TEMPLATE, title="Weekly load (colour = share of the row's busiest week)",
+                          xaxis={"type": "category", "title": "Week starting"}, height=340, margin={"l": 150})
+        return fig
+
+    def plot_intensity_radar(self) -> go.Figure:
+        """Mean intensity by category. Each axis is scaled to its own maximum —
+        a single shared maximum squashed sprints and accelerations against m/min."""
+        metrics = ["distance_per_min", "sprints_total", "top_speed_kmh", "accelerations", "decelerations"]
+        means = pd.DataFrame(
+            {category: [self._filter(category)[m].mean() for m in metrics] for category in MATCH_CATEGORIES},
+            index=metrics,
+        )
+        scaled = means.div(means.max(axis=1).replace(0, np.nan), axis=0)
+        labels = [_label(m) for m in metrics]
+        fig = go.Figure()
+        for category in MATCH_CATEGORIES:
+            if means[category].isna().all():
+                continue
+            fig.add_trace(
+                go.Scatterpolar(
+                    r=list(scaled[category]) + [scaled[category].iloc[0]], theta=labels + [labels[0]],
+                    name=MATCH_CATEGORY_LABELS[category], line={"color": CATEGORY_COLORS[category], "width": 2},
+                    fill="toself", opacity=0.75,
+                    customdata=list(means[category].round(1)) + [round(means[category].iloc[0], 1)],
+                    hovertemplate="%{theta}: %{customdata}<extra>" + MATCH_CATEGORY_LABELS[category] + "</extra>",
+                )
+            )
         fig.update_layout(
-            title="Weekly Load Heatmap (color = normalized load; hover for the raw value)",
-            xaxis_title="Week",
-            xaxis={"type": "category"},
-            margin={"l": 140, "r": 20, "t": 50, "b": 40},
-            height=320,
+            template=TEMPLATE, height=460, margin={"t": 60}, legend={"y": 1.1},
+            polar={"bgcolor": cfg.THEME["surface"], "radialaxis": {"range": [0, 1], "showticklabels": False, "gridcolor": cfg.THEME["grid"]},
+                   "angularaxis": {"gridcolor": cfg.THEME["grid"], "linecolor": cfg.THEME["axis"]}},
         )
         return fig
 
-    def plot_intensity_radar(self):
-        metrics = ["distance_per_min", "sprints_total", "top_speed_kmh", "accelerations", "decelerations"]
-        means_by_category = {}
-        for category in MATCH_CATEGORIES:
-            df = self._filter(category)
-            means_by_category[category] = [df[m].mean() if m in df.columns and not df.empty else 0 for m in metrics]
-
-        max_val = max([*(v for values in means_by_category.values() for v in values), 1])
-        norm_by_category = {cat: [v / max_val for v in values] for cat, values in means_by_category.items()}
-
-        angles = np.linspace(0, 2 * np.pi, len(metrics), endpoint=False).tolist()
-        angles += angles[:1]
-
-        fig, ax = plt.subplots(figsize=(7, 7), subplot_kw={"projection": "polar"})
-        for category, norm in norm_by_category.items():
-            values = norm + norm[:1]
-            ax.plot(angles, values, "o-", linewidth=2, label=MATCH_CATEGORY_LABELS[category], color=CATEGORY_COLORS[category])
-            ax.fill(angles, values, alpha=0.2, color=CATEGORY_COLORS[category])
-
-        ax.set_theta_offset(np.pi / 2)
-        ax.set_theta_direction(-1)
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels([_label(m) for m in metrics], fontsize=9)
-        ax.set_title("Intensity: Training vs Official vs Practice", fontsize=13, fontweight="bold", pad=20)
-        ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1))
-        fig.tight_layout()
-        return fig
-
-    def plot_performance_trends(self, metrics: list[str] | None = None):
+    def plot_performance_trends(self, metrics: list[str] | None = None) -> go.Figure:
         metrics = metrics or ["total_distance_m", "sprint_distance_m"]
-        by_category = {category: self._filter(category) for category in MATCH_CATEGORIES}
-
-        fig, axes = plt.subplots(len(metrics), 1, figsize=(12, 4.5 * len(metrics)))
-        axes = [axes] if len(metrics) == 1 else axes
-        fig.suptitle("Performance Trends Over Time", fontsize=14, fontweight="bold")
-
-        for ax, metric in zip(axes, metrics):
-            for category, df in by_category.items():
-                if metric in df.columns and not df.empty:
-                    marker = "o" if category == "training" else CATEGORY_MARKERS[category]
-                    size = 50 if category == "training" else 80
-                    alpha = 0.6 if category == "training" else 0.85
-                    ax.scatter(
-                        df["date"], df[metric], alpha=alpha, label=MATCH_CATEGORY_LABELS[category],
-                        color=CATEGORY_COLORS[category], s=size, marker=marker,
-                    )
-            training = by_category["training"]
-            if metric in training.columns and not training.empty:
-                training_sorted = training.sort_values("date")
-                rolling = training_sorted[metric].rolling(5, min_periods=1).mean()
-                ax.plot(training_sorted["date"], rolling, color="#27ae60", alpha=0.6, label="Training trend")
-            ax.set_title(_label(metric), fontsize=11, fontweight="bold")
-            ax.legend(fontsize=9)
-            ax.grid(alpha=0.3)
-
-        fig.tight_layout()
+        fig = make_subplots(rows=len(metrics), cols=1, shared_xaxes=True, subplot_titles=[_label(m) for m in metrics], vertical_spacing=0.08)
+        for row, metric in enumerate(metrics, start=1):
+            for category in MATCH_CATEGORIES:
+                df = self._filter(category).dropna(subset=[metric])
+                if df.empty:
+                    continue
+                fig.add_trace(
+                    go.Scatter(
+                        x=df["date"], y=df[metric], mode="markers", name=MATCH_CATEGORY_LABELS[category],
+                        marker={"color": CATEGORY_COLORS[category], "size": 8, "line": {"color": cfg.THEME["surface"], "width": 1}},
+                        legendgroup=category, showlegend=row == 1,
+                        hovertemplate=f"%{{x|%d %b %Y}}: %{{y:,.1f}}<extra>{MATCH_CATEGORY_LABELS[category]}</extra>",
+                    ),
+                    row=row, col=1,
+                )
+            training = self._filter("training").dropna(subset=[metric]).sort_values("date")
+            if not training.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=training["date"], y=training[metric].rolling(5, min_periods=1).mean(), mode="lines",
+                        name="Training, 5-session mean", line={"color": CATEGORY_COLORS["training"], "width": 2, "dash": "dot"},
+                        legendgroup="trend", showlegend=row == 1, hoverinfo="skip",
+                    ),
+                    row=row, col=1,
+                )
+        fig.update_layout(template=TEMPLATE, height=320 * len(metrics), margin={"t": 80}, legend={"y": 1.0 + 0.12 / len(metrics)})
         return fig
 
-    def plot_quality_evolution(self, weights: dict[str, float] | None = None):
+    def plot_quality_evolution(self, weights: dict[str, float] | None = None) -> go.Figure | None:
         quality = self.monthly_quality_metric(weights=weights)
         if quality.empty:
             return None
-
-        fig, ax = plt.subplots(figsize=(12, 5))
-        ax.plot(quality["date"], quality["training_quality"], marker="o", label="Training Quality", color=CATEGORY_COLORS["training"])
-        ax.plot(quality["date"], quality["match_quality"], marker="s", label="Official Match Quality", color=CATEGORY_COLORS["official_match"])
-        ax.plot(quality["date"], quality["combined_quality"], marker="D", linewidth=3, label="Combined Quality", color="#3498db")
-        ax.axhspan(80, 100, alpha=0.08, color="green")
-        ax.axhspan(60, 80, alpha=0.08, color="orange")
-        ax.axhspan(0, 60, alpha=0.08, color="red")
-        ax.set_ylim(0, 105)
-        ax.set_xlabel("Month")
-        ax.set_ylabel("Quality Score (0-100)")
-        ax.set_title("Monthly Quality Evolution", fontsize=14, fontweight="bold")
-        ax.legend(fontsize=9)
-        ax.grid(alpha=0.3)
-        ax.tick_params(axis="x", rotation=45)
-        fig.tight_layout()
+        fig = go.Figure()
+        for column, name, color, width in (
+            ("training_quality", "Training", CATEGORY_COLORS["training"], 2),
+            ("match_quality", "Official match", CATEGORY_COLORS["official_match"], 2),
+            ("combined_quality", "Combined", cfg.THEME["text"], 3),
+        ):
+            fig.add_trace(go.Scatter(x=quality["date"], y=quality[column], mode="lines+markers", name=name,
+                                     line={"color": color, "width": width}, marker={"size": 8}, connectgaps=False,
+                                     hovertemplate=f"%{{x|%b %Y}}: %{{y:.1f}}<extra>{name}</extra>"))
+        fig.update_layout(template=TEMPLATE, height=400, yaxis={"range": [0, 105], "title": "Quality score (0–100)"},
+                          xaxis={"tickformat": "%b %y"})
         return fig
 
 

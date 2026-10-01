@@ -19,6 +19,7 @@ package (`src/football_stats`) that the dashboards call into — the goal is tha
 analysis logic lives in reusable functions, not only inside notebook cells.
 
 📖 **Read the full docs before making changes:**
+[`docs/gps_report.md`](docs/gps_report.md) ·
 [`docs/season_prediction.md`](docs/season_prediction.md) ·
 [`docs/gps_analysis.md`](docs/gps_analysis.md) ·
 [`docs/skillcorner_metrics.md`](docs/skillcorner_metrics.md) ·
@@ -46,9 +47,58 @@ older pip inside new venvs, hence the `pip install -U pip` line.
 
 ```bash
 streamlit run dashboards/season_dashboard.py   # league table + Monte Carlo prediction
-streamlit run dashboards/gps_dashboard.py      # GPS trends + add-session form
-pytest tests/                                   # 113 tests, ~2s
+streamlit run dashboards/gps_dashboard.py      # GPS Report + More analysis
+pytest tests/                                   # 153 tests, ~3s
 ```
+
+Run both from the **repo root**: that is where Streamlit picks up the dark theme
+in `.streamlit/config.toml`. The dashboards add `src/` to the path themselves, so
+they run from a fresh clone after `pip install -r requirements.txt`.
+
+## GPS Report
+
+`dashboards/gps_dashboard.py` opens on the **GPS Report**, a single-page, black,
+Power BI-style weekly report modelled on the "Weekly Change % GPS Report" layout
+used by club sports scientists. The sidebar holds the player block and
+the global filters — season, date range (two date inputs + a slider, kept in
+sync), session type (all / official matches / training / practice matches) and a
+focus metric — and every section follows them.
+
+| # | Section | What it shows |
+|---|---|---|
+| 1 | **Weekly change %** + KPI cards | One row per session, one heat-coloured cell per metric (Total Distance, HSR & Sprint, Max Speed, High-Intensity Actions, Distance per Minute): % change vs the same MD label in the previous microcycle, falling back to the previous session of the same type (●). Below it, one card per metric: the average session in range on a semicircle gauge against Gref (Max Speed as a big number). |
+| 2 | **Weekly load & ACWR** | Sunday–Saturday weekly load of the focus metric, stacked by session type, rises above +10 % flagged; ACWR in a panel below with the 0.8–1.5 band. |
+| 3 | **Match demand & microcycle** | Each session as % of Gref; mean load per MD label for regular microcycles; a % of Gref table by MD day for every report metric. |
+| 4 | **Speed & sprint** | Max speed per session against the season best; weekly sprint distance. |
+| 5 | **Practice matches** | Friendlies vs official matches as % of Gref — does a friendly reproduce match demand? |
+| 6 | **Session detail** | Sortable table, type and MD tagged, cells shaded by % of Gref. |
+
+The **More analysis** page keeps the deeper tabs (monthly, intensity, baselines,
+quality, performance insights, physical profile, body composition, body ×
+performance, add session), restyled to the same theme and filters.
+
+**Definitions and thresholds** — all in `src/football_stats/gps/config.py`, in
+full in [`docs/gps_report.md`](docs/gps_report.md):
+
+- **Bands (STATSports):** HSR & Sprint = distance > 19.8 km/h, sprinting included
+  (the export's `high_speed_distance_m`); HSR alone = 19.8–25.2 km/h; Sprint >
+  25.2 km/h; accelerations/decelerations beyond ±3 m/s². High-Intensity Actions =
+  acc + dec + sprints. Distance per minute = distance ÷ GPS duration (recomputed).
+- **Gref** = mean of the best 5 official-match values per metric, this season
+  (fewer than 5 → all of them, with a warning; a season without matches borrows
+  the previous one's). Unused-substitute matches never count; per-minute rates
+  ignore appearances under 20 minutes.
+- **MD labels:** official match = MD; up to 2 days after = MD+1/MD+2; otherwise
+  MD−n to the next official match; friendlies never anchor. A microcycle runs MD →
+  day before the next MD; longer than 10 days = extended.
+- **Heat colours** on |% change|: ≤ 10 % green, 10–20 % amber, 20–30 % orange,
+  > 30 % red, interpolated.
+- **ACWR** = this week ÷ mean of the previous 4 weeks (EWMA selectable), all
+  session types, no ratio before 4 full weeks or for a partial final week. Safe
+  band 0.8–1.5. *A monitoring indicator, not an injury predictor.*
+- **Not possible with this export:** a training-load metric (no Player Load /
+  DSL / HML — calories are not load), and time-to-speed or acceleration by speed
+  band (no per-second velocity data).
 
 ## Regenerating `data/body/` from new nutrition report PDFs
 
@@ -64,23 +114,23 @@ authority on every derived body metric (Durnin & Womersley body density, the
 Heath-Carter somatotype components, corrected girths); the `body` package only
 reads its output. See [`docs/body_composition.md`](docs/body_composition.md).
 
-## Regenerating `gps_sessions.csv` from a new Excel export
+## Syncing `gps_sessions.csv` from the STATSports workbook
+
+The source of truth is the STATSports export workbook
+`SATS_Football_GPS_Advanced.xlsx`, which lives **outside** the repo (by default
+next to it: `../SATS_Football_GPS_Advanced.xlsx`; override with the
+`FOOTBALL_GPS_XLSX` environment variable). `data/gps/gps_sessions.csv` is its
+tidy sub-product. After updating the workbook:
 
 ```bash
-python3 -c "
-from football_stats.gps.data_store import build_from_excel, save_sessions
-sessions = build_from_excel('../_archive/SATS_Football_GPS_Advanced.xlsx')  # path relative to repo root
-save_sessions(sessions)
-print(f'Wrote {len(sessions)} sessions to data/gps/gps_sessions.csv')
-"
+python -m football_stats.gps.sync --check   # show added/removed rows, write nothing
+python -m football_stats.gps.sync           # rebuild the CSV
 ```
 
-The spreadsheet needs the same `Jogos`/`Treinos` sheet shape as the original
-`SATS_Football_GPS_Advanced.xlsx` (now in `StatsSports/_archive/`). **This
-overwrites `data/gps/gps_sessions.csv` entirely, it doesn't merge** — any
-sessions added since via the dashboard's "Add Session" form only exist in the
-CSV, not in the spreadsheet, and will be lost unless you've added them to the
-spreadsheet too.
+The workbook is only ever read. **The sync overwrites the CSV, it doesn't merge**
+— a session added through the dashboard's "Add Session" form exists only in the
+CSV and is lost at the next sync, so add new sessions to the workbook. The
+dashboard's sidebar warns when the workbook is newer than the CSV.
 
 ## Repository layout
 
@@ -88,7 +138,9 @@ spreadsheet too.
 Football-Stats-Data/
 ├── docs/                    # detailed docs — start here for anything beyond a quick run
 ├── src/football_stats/      # the package: scraping, season, players, gps
-├── dashboards/               # the two Streamlit apps
+├── dashboards/               # Streamlit apps: season_dashboard.py, gps_dashboard.py (shell)
+│                             #   + gps_report.py / gps_analysis.py (its two pages)
+├── .streamlit/config.toml    # dark theme (mirrors gps/config.py) + usage stats off
 ├── tools/                    # one-off extractors that write into data/ (not imported by the package)
 ├── data/
 │   ├── seasons/<key>/{raw,processed}/   # per-season fixture data
@@ -99,11 +151,10 @@ Football-Stats-Data/
 
 ## Important instructions
 
-- **Don't hand-edit `data/gps/gps_sessions.csv`'s structure.** Add sessions
-  through the dashboard's "Add Session" tab, or `gps.data_store.append_session()`
-  — both validate the minimum required fields and keep the schema (documented in
-  [`docs/gps_analysis.md`](docs/gps_analysis.md)) consistent. Editing values in
-  place (e.g. correcting a typo) is fine.
+- **Don't edit `data/gps/gps_sessions.csv` by hand** — fix the workbook and
+  re-sync (see above). Every threshold, colour and column mapping of the GPS
+  report lives in `src/football_stats/gps/config.py`; change it there, not in
+  chart code.
 - **Adding a season/division is a config change, not a code change** — see
   "Declaring a season" in [`docs/season_prediction.md`](docs/season_prediction.md).
   Don't hardcode a new team or competition name into `season/*.py`.
@@ -115,19 +166,19 @@ Football-Stats-Data/
   other teams' games against each other) — the season dashboard shows an in-app
   banner about this. Don't treat other teams' standings rows as accurate until
   you've run the scraper for full coverage.
-- **Chart functions in `gps/analyzer.py` return a `matplotlib.figure.Figure`**,
-  they don't call `plt.show()`. If you use them outside the dashboard, do
-  something with the returned figure.
+- **Every chart is Plotly** (`gps/charts.py`, and the `plot_*` methods in
+  `gps/analyzer.py`), styled with the `gps_dark` template. Render with
+  `st.plotly_chart(fig, theme=None)` — without `theme=None` Streamlit's own theme
+  overrides the template's colours.
 - **A GPS "game" session's `competition_type` decides whether it's an official
   match or a practice match** (`"Campeonato"`/`"Taça"` → official,
   `"Treino"`/missing → practice) — get it right when adding a session, since
   every chart/table in the GPS dashboard splits on this, not on `session_kind`
   alone. See "Match category" in [`docs/gps_analysis.md`](docs/gps_analysis.md#4-match-category-official-vs-practice-vs-training).
-- **GPS analysis is season-scoped** (a season = Jul 1–Jun 30) — `weekly_load()`
-  sums across seasons incorrectly if called on multi-season data without first
-  filtering to one season, since week numbers restart each season. The
-  dashboard's Season selector handles this; new code calling `weekly_load()`
-  directly needs to filter first. See §5 of
+- **GPS analysis is season-scoped** (a season = Jul 1–Jun 30). Weekly
+  aggregation uses Sunday–Saturday calendar weeks computed from the dates, never
+  the hand-typed `week` column, and Gref, MD labels and ACWR are computed per
+  season. See §5 of
   [`docs/gps_analysis.md`](docs/gps_analysis.md#5-seasons-why-raw-month-numbers-were-wrong-and-what-replaced-them).
 - **`.venv/` is gitignored on purpose** — don't commit it. Regenerate with the
   Setup steps above on a fresh clone.

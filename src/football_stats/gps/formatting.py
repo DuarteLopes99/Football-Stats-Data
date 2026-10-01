@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from football_stats.gps.config import SESSION_CATEGORY_LABELS
+
 DISPLAY_LABELS: dict[str, str] = {
     "date": "Date",
     "season": "Season",
@@ -48,8 +50,15 @@ DISPLAY_LABELS: dict[str, str] = {
     "official_minutes": "Official Minutes",
     "minutes_source": "Minutes Source",
     "short_appearance": "Rate Extrapolated",
-    "goals_for": "Goals For",
-    "goals_against": "Goals Against",
+    # Report columns (gps/cleaning.py, gps/microcycle.py)
+    "md_label": "MD",
+    "minutes_played": "Minutes (sheet, else GPS)",
+    "hsr_sprint_m": "HSR & Sprint (m)",
+    "hsr_m": "HSR 19.8–25.2 (m)",
+    "hia": "High-Intensity Actions",
+    "m_per_min": "m/min",
+    "unused_sub": "Unused Sub",
+    "has_gps": "Has GPS Data",
     "minutes_delta": "GPS − Match Sheet (min)",
     "flag": "Flag",
     "n": "Matches",
@@ -70,11 +79,7 @@ DISPLAY_LABELS: dict[str, str] = {
     "source_file": "Source Report",
 }
 
-MATCH_CATEGORY_LABELS: dict[str, str] = {
-    "training": "Training",
-    "official_match": "Official Match",
-    "practice_match": "Practice Match",
-}
+MATCH_CATEGORY_LABELS: dict[str, str] = dict(SESSION_CATEGORY_LABELS)
 
 _AGG_SUFFIX_LABELS = {"mean": "Avg", "sum": "Total", "max": "Max", "count": "#"}
 _WEEKLY_CATEGORY_LABELS = {**MATCH_CATEGORY_LABELS, "total": "Overall"}

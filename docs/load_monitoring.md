@@ -30,16 +30,29 @@ Gabbett, T.J. (2016). *The training–injury prevention paradox: should
 athletes be training smarter and harder?* British Journal of Sports
 Medicine, 50(5), 273–280.
 
-`compute_acwr()`: rolling 7-day load sum ÷ rolling 28-day load average
-(scaled to a 7-day window so the ratio is unitless). Resamples sessions to a
-daily sum first — days with no session count as zero load, not a gap.
+**The report uses the weekly form** — `weekly_acwr()`: this Sunday–Saturday
+week's load ÷ mean of the previous 4 weeks (uncoupled: the acute week is not
+inside its own baseline), summed over every session type. EWMA variant
+(Williams et al. 2017, spans 7/28 days) selectable. No ratio for the first 4
+weeks of a season, when chronic load is 0, or for a partial final week. Full
+definition: [`gps_report.md` §8](gps_report.md#8-weekly-load-and-acwr-gpsload_monitoringpy).
 
-| ACWR | Zone |
+`compute_acwr()` is the daily equivalent (last 7 days ÷ the average 7-day block
+over the 28 days *before* them), NaN until that full history exists. It used to
+start on day 1 with a coupled chronic window, producing ratios like 0.14 → 1.0
+over the first week that measured nothing but the missing history.
+
+| ACWR | Zone (`gps/config.py: ACWR_SAFE_BAND`) |
 |---|---|
-| `< 0.8` | Undertrained |
-| `0.8 – 1.3` | Optimal |
-| `1.3 – 1.5` | Elevated Risk |
-| `> 1.5` | High Risk |
+| `< 0.8` | Below range |
+| `0.8 – 1.5` | Within range |
+| `> 1.5` | Above range |
+
+The earlier four-zone scheme (0.8–1.3 "optimal", 1.3–1.5 "elevated risk") was
+replaced by the single 0.8–1.5 band from Ravé et al. (2020). **ACWR is a
+monitoring indicator, not an injury predictor.**
+
+Monotony and strain now use the same Sunday–Saturday weeks as ACWR.
 
 ## Training Monotony & Strain
 

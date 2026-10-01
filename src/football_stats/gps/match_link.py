@@ -36,8 +36,9 @@ from __future__ import annotations
 import pandas as pd
 
 from football_stats.config import SeasonConfig, list_seasons
+from football_stats.gps import config as cfg
 
-OFFICIAL_COMPETITION_TYPES = {"Campeonato", "Taça"}
+OFFICIAL_COMPETITION_TYPES = set(cfg.OFFICIAL_COMPETITION_TYPES)
 """``competition_type`` values that correspond to a real fixture (see
 ``gps/analyzer.py``'s match categories — practice matches are "Treino")."""
 
@@ -62,14 +63,14 @@ PER90_MATCH_METRICS = [
     "sprints_total",
 ]
 
-LARGE_OVERHANG_MIN = 10.0
+LARGE_OVERHANG_MIN = cfg.LARGE_OVERHANG_MIN
 """Overhang above which the recording window is flagged as notably wider than
 the match itself. Not an error threshold — a big overhang is normal when the
 unit runs through the warm-up and warm-down. It is the point past which the
 per-90 correction is large enough (roughly a fifth on a typical appearance)
 that it is worth knowing the rate moved a lot."""
 
-MINUTES_FLOOR = 20.0
+MINUTES_FLOOR = cfg.SHORT_APPEARANCE_MIN
 """Official minutes below which a per-90 rate is extrapolation, not measurement.
 
 A 9-minute substitute stint covering 2070 m becomes 20 700 m per 90 — a rate no
@@ -83,7 +84,7 @@ because a couple of them decide the ordering of a bucket of four matches.
 Per-session listings **keep** them and flag them instead — the session happened,
 and deleting a row from a log is worse than labelling it."""
 
-UNDER_RECORDING_MIN = -5.0
+UNDER_RECORDING_MIN = cfg.UNDER_RECORDING_MIN
 """Overhang below which the unit recorded **less** than the official playing
 time, meaning the GPS totals themselves are missing part of the match. Unlike a
 positive overhang this one does compromise the data: distance and sprint counts

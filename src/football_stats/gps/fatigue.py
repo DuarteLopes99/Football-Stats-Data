@@ -17,13 +17,15 @@ from __future__ import annotations
 
 import pandas as pd
 
+from football_stats.gps import config as cfg
+
 MECHANICAL_LOAD_COLUMN = "mechanical_load"
 """Accelerations + decelerations. A count of speed *changes*, standing in for
 the eccentric/neuromuscular cost that distance can't see. It is a proxy, not a
 measured force: the device's own thresholds decide what counts as an
 acceleration, and those are not in this dataset."""
 
-BALANCED_ACCEL_DECEL = (0.8, 1.25)
+BALANCED_ACCEL_DECEL = cfg.BALANCED_ACCEL_DECEL
 """Range within which the accel:decel ratio is treated as balanced.
 
 Decelerating is eccentric and is the more damaging half of the pair, so a ratio
@@ -31,14 +33,14 @@ persistently below this band means braking is outpacing accelerating. Treat it
 as a prompt to look at soreness, not as a diagnostic — the band is a reasonable
 symmetry interval, **not** a validated threshold from the literature."""
 
-NEAR_MAX_SPEED_PCT = 0.90
+NEAR_MAX_SPEED_PCT = cfg.NEAR_MAX_SPEED_PCT
 """Share of the reference top speed above which a session counts as high-speed
 exposure. Regular near-maximal sprinting is widely used as a hamstring-injury
 prevention target in team sport; 90% is the common working figure, and the
 reference speed here is the player's own best in the current scope."""
 
 
-SECOND_HALF_MIN_MINUTES = 50.0
+SECOND_HALF_MIN_MINUTES = cfg.SECOND_HALF_MIN_MINUTES
 """Minutes a player must have been on the pitch for before a second-half sprint
 count means anything.
 

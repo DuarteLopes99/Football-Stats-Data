@@ -1,0 +1,17 @@
+# Streamlit theme for the GPS report. Streamlit reads this file from the
+# directory the app is launched in, so run from the repo root:
+#     streamlit run dashboards/gps_dashboard.py
+#
+# Colours mirror THEME in src/football_stats/gps/config.py (the single source
+# of truth); tests/test_gps_config.py fails if the two drift apart.
+
+[theme]
+base = "dark"
+primaryColor = "#3ADBC8"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#141414"
+textColor = "#FFFFFF"
+
+[browser]
+# Personal data: no usage statistics leave the machine.
+gatherUsageStats = false
