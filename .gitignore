@@ -7,3 +7,18 @@ venv/
 src/*.egg-info/
 .pytest_cache/
 .ipynb_checkpoints/
+
+# CSVs are ignored by default: data/body/ holds parsed nutritionist reports,
+# which are personal health records and must not reach a remote.
+*.csv
+
+# The GPS log and the fixture scrapes are the repo's actual dataset and are
+# already tracked, so they are re-included explicitly -- without these lines a
+# future scrape would write a new CSV that git silently ignored.
+!data/gps/*.csv
+!data/seasons/**/*.csv
+
+# The whole body directory, not just its CSVs -- body_analysis.xlsx is the same
+# nutritionist data in another container, and ignoring only one format would
+# leave the record exposed through the other.
+data/body/

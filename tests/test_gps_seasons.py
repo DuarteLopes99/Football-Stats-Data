@@ -73,3 +73,25 @@ def test_season_summary_has_one_row_per_season():
     assert sorted(summary["season"]) == ["2024/25", "2025/26"]
     assert summary.set_index("season").loc["2024/25", "total_sessions"] == 2
     assert summary.set_index("season").loc["2025/26", "total_sessions"] == 2
+
+
+def test_empty_scope_returns_typed_frames_rather_than_raising():
+    """Regression: selecting a season with body data but no GPS sessions.
+
+    ``monthly_quality_metric`` built its frame from an empty row list and then
+    sorted it by "date", raising KeyError on a column that never existed. It was
+    unreachable while the dashboard's Season selector was built from GPS
+    sessions alone; it stopped being unreachable once the selector spanned the
+    body-composition record too.
+    """
+    empty = pd.DataFrame(columns=[*SCHEMA_COLUMNS, "match_category", "season"])
+    analyzer = PerformanceAnalyzer(empty)
+
+    quality = analyzer.monthly_quality_metric()
+    seasons = analyzer.season_summary()
+
+    assert quality.empty and "date" in quality.columns
+    assert seasons.empty and "season" in seasons.columns
+    # The point of the typed columns: callers can sort/filter without a guard.
+    assert quality.sort_values("date").empty
+    assert seasons.sort_values("season").empty

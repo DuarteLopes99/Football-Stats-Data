@@ -266,10 +266,18 @@ class PerformanceAnalyzer:
         stats["was_starter"] = stats["was_starter"].map({True: "Starter", False: "Substitute"})
         return stats
 
+    QUALITY_COLUMNS = ["date", "month_label", "training_quality", "match_quality", "combined_quality"]
+
     def monthly_quality_metric(self, weights: dict[str, float] | None = None) -> pd.DataFrame:
         """Composite 0-100 quality score per calendar month, blending training
         (60%) and official-match (40%) intensity. Practice matches don't factor
         in — they're not a reliable read on competitive readiness.
+
+        Returns an empty frame **with the expected columns** when there are no
+        sessions in scope, so callers can filter or sort it like any other
+        result. Reachable now that the dashboard's Season selector spans the
+        body-composition record too: those seasons have assessments but no GPS
+        sessions at all.
         """
         weights = weights or _QUALITY_WEIGHTS_DEFAULT
         training_monthly = self.monthly_summary("training")
@@ -297,10 +305,21 @@ class PerformanceAnalyzer:
                 row[kind] = round((score / total_weight) * 100, 2) if total_weight else 0.0
             row["combined_quality"] = round(0.6 * row["training_quality"] + 0.4 * row["match_quality"], 2)
             rows.append(row)
+        if not rows:
+            return pd.DataFrame(columns=self.QUALITY_COLUMNS)
         return pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
 
+    SEASON_SUMMARY_COLUMNS = [
+        "season", "total_sessions", "training_sessions", "official_matches", "practice_matches",
+        "total_distance_km", "peak_top_speed_kmh", "avg_quality_score",
+    ]
+
     def season_summary(self) -> pd.DataFrame:
-        """One row per season: session counts by category, distance, peak speed, quality."""
+        """One row per season: session counts by category, distance, peak speed, quality.
+
+        Empty-but-typed when there are no sessions in scope, for the same reason
+        as ``monthly_quality_metric``.
+        """
         rows = []
         for season, group in self.sessions.groupby("season"):
             quality = PerformanceAnalyzer(group).monthly_quality_metric()
@@ -317,6 +336,8 @@ class PerformanceAnalyzer:
                     "avg_quality_score": round(quality["combined_quality"].mean(), 1) if not quality.empty else None,
                 }
             )
+        if not rows:
+            return pd.DataFrame(columns=self.SEASON_SUMMARY_COLUMNS)
         return pd.DataFrame(rows).sort_values("season").reset_index(drop=True)
 
     # --------------------------------------------------------------- #

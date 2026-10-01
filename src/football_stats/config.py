@@ -24,7 +24,13 @@ class SeasonConfig:
     """Human-readable name shown in dashboards."""
 
     competition_name: str
-    """Exact zerozero.pt competition string used to filter scraped fixture rows."""
+    """Exact zerozero.pt competition string used to filter scraped fixture rows.
+
+    This is the **league** only. It drives the table and the Monte Carlo
+    prediction, which are defined over a single round-robin competition — cup
+    ties and play-off rounds would corrupt both. Other competitions the team
+    played in the same season are declared in ``extra_competitions``.
+    """
 
     primary_team: str
     """Slug (key into ``teams``) of the team this season's data collection is centered on."""
@@ -34,6 +40,17 @@ class SeasonConfig:
 
     team_name_mapping: dict[str, str] = field(default_factory=dict)
     """zerozero.pt display name (as it appears in scraped tables) -> team slug."""
+
+    extra_competitions: tuple[str, ...] = ()
+    """Other competitions the primary team played this season — cup runs and
+    play-off rounds.
+
+    Deliberately **not** used by the league table or the predictor: those are
+    defined over ``competition_name``'s round-robin alone. This exists so that
+    GPS match sessions from those competitions can still be recognised as
+    official matches and linked to a fixture (see ``gps/match_link.py``) rather
+    than being silently unmatchable.
+    """
 
     @property
     def dir(self) -> Path:
@@ -84,7 +101,18 @@ MANSORES_2025_26 = SeasonConfig(
         "CD TareiS23": "cd_tarei",
         "EF Rui DoloresS23": "ef_rui_dolores",
         "Mosteirô FCS23": "mosteiro_fc",
+        # Apuramento de Campeão opponents. No fixtures-page URL is declared for
+        # them: they are only ever seen from Mansores' own scrape, which is all
+        # the GPS fixture link reads.
+        "Calvão": "calvao",
+        "Gafanha": "gafanha",
+        "AD Calvão": "calvao",
+        "Gafanha B": "gafanha",
     },
+    extra_competitions=(
+        "Taça Pecol - Prof. José Valente Pinho Leão 25/26",
+        "Apuramento de Campeão",
+    ),
 )
 
 FERMEDO_2024_25 = SeasonConfig(

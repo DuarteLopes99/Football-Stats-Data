@@ -33,6 +33,41 @@ DISPLAY_LABELS: dict[str, str] = {
     "decelerations": "Decelerations (#)",
     "calories": "Calories",
     "notes": "Notes",
+    # Fixture-link columns (gps/match_link.py)
+    "fixture_date": "Fixture Date",
+    "fixture_match": "Fixture Link",
+    "days_from_fixture": "Days from Fixture",
+    "competition": "Competition",
+    "matchweek": "Matchweek",
+    "venue": "Venue",
+    "opponent": "Opponent",
+    "goals_for": "Goals For",
+    "goals_against": "Goals Against",
+    "scoreline": "Score",
+    "team_result": "Team Result",
+    "official_minutes": "Official Minutes",
+    "minutes_source": "Minutes Source",
+    "short_appearance": "Rate Extrapolated",
+    "goals_for": "Goals For",
+    "goals_against": "Goals Against",
+    "minutes_delta": "GPS − Match Sheet (min)",
+    "flag": "Flag",
+    "n": "Matches",
+    "sessions": "Sessions",
+    "mean_minutes": "Avg Minutes",
+    # Body-composition link columns (body/gps_link.py)
+    "assessment_date": "Assessment Date",
+    "days_since_assessment": "Days Since Assessment",
+    "window_start": "From",
+    "window_end": "To",
+    "days": "Days",
+    "sessions_per_week": "Sessions / Week",
+    "km_per_week": "km / Week",
+    "football_kcal_per_day": "Football kcal / Day",
+    "total_calories": "Total Calories",
+    "total_duration_min": "Total Duration (min)",
+    "plausible_range": "Plausible Range",
+    "source_file": "Source Report",
 }
 
 MATCH_CATEGORY_LABELS: dict[str, str] = {
@@ -53,6 +88,10 @@ def _humanize_one(col: str) -> str:
         return MATCH_CATEGORY_LABELS[col]
     if col == "duration_min_count":
         return "Sessions"
+    if col.endswith("_per90_official"):
+        base = col[: -len("_per90_official")]
+        if base in DISPLAY_LABELS:
+            return f"{DISPLAY_LABELS[base]} per 90 (match sheet)"
     if col.endswith("_per90"):
         base = col[: -len("_per90")]
         if base in DISPLAY_LABELS:
@@ -70,6 +109,12 @@ def _humanize_one(col: str) -> str:
         for metric in _WEEKLY_METRICS:
             if col == f"{category}_{metric}":
                 return f"{category_label} – {DISPLAY_LABELS[metric]}"
+
+    if "_" not in col and col != col.lower():
+        # Already a human label -- body-composition metric names arrive as
+        # "Massa Isenta de Gordura (Δ)", which Title Case would mangle into
+        # "Massa Isenta De Gordura".
+        return col
 
     return col.replace("_", " ").title()
 
