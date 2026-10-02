@@ -1,7 +1,11 @@
-"""Streamlit dashboard: GPS training/match performance analysis.
+"""Streamlit dashboard: GPS Report (weekly change, load, match demand) and More analysis.
 
-Run with:
+Run from the repo root (that is where Streamlit finds the .streamlit/ theme):
     streamlit run dashboards/gps_dashboard.py
+
+This file holds the shell only — page setup, the global sidebar filters and
+navigation. The report layout is ``gps_report.py``, the deeper tabs are
+``gps_analysis.py``, and every calculation lives in ``football_stats.gps``.
 """
 
 from __future__ import annotations
@@ -12,411 +16,136 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+_HERE = Path(__file__).resolve().parent
+# Runs from a fresh clone without `pip install -e .`.
+sys.path.insert(0, str(_HERE.parent / "src"))
+sys.path.insert(0, str(_HERE))
 
-from football_stats.gps.analyzer import MATCH_CATEGORIES, PerformanceAnalyzer, add_match_category_column  # noqa: E402
-from football_stats.gps.data_store import DEFAULT_SESSIONS_PATH, append_session, load_sessions  # noqa: E402
-from football_stats.gps.formatting import DISPLAY_LABELS, MATCH_CATEGORY_LABELS, humanize_columns, numeric_column_config  # noqa: E402
-from football_stats.gps.gauges import (  # noqa: E402
-    acwr_gauge,
-    intensity_gauge,
-    monotony_gauge,
-    percentile_gauge,
-    quality_gauge,
-    strain_gauge,
-    top_speed_gauge,
-)
-from football_stats.gps.load_monitoring import classify_acwr, classify_monotony, compute_acwr, weekly_monotony_and_strain  # noqa: E402
-from football_stats.gps.position_baselines import POSITION_LABELS, POSITIONS  # noqa: E402
-from football_stats.gps.seasons import add_season_column  # noqa: E402
-from football_stats.gps.skillcorner_metrics import (  # noqa: E402
-    PER90_METRICS,
-    add_intensity_ratios,
-    add_per90_columns,
-    percentile_rank,
-    robust_top_speed,
-)
+from football_stats.gps import charts  # noqa: E402
+from football_stats.gps import config as cfg  # noqa: E402
+from football_stats.gps.cleaning import prepare_sessions  # noqa: E402
+from football_stats.gps.data_store import DEFAULT_SESSIONS_PATH, load_sessions  # noqa: E402
+from football_stats.gps.microcycle import add_md_labels  # noqa: E402
+from football_stats.gps.sync import source_is_newer  # noqa: E402
 
-st.set_page_config(page_title="GPS Performance", page_icon="🏃", layout="wide")
+import gps_analysis  # noqa: E402
+import gps_report  # noqa: E402
 
-ALL_SEASONS = "All seasons"
-WEEKLY_METRICS = ["duration_min", "total_distance_m", "sprint_distance_m", "high_speed_distance_m", "calories"]
-WEEKLY_GROUPS = [
-    ("training", "Training"),
-    ("official_match", "Official Matches"),
-    ("practice_match", "Practice Matches"),
-    ("total", "Overall (All Categories)"),
-]
+st.set_page_config(page_title="GPS Report", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
 
 @st.cache_data
-def _load() -> pd.DataFrame:
-    sessions = load_sessions(DEFAULT_SESSIONS_PATH)
-    if sessions.empty:
-        return sessions
-    sessions = add_match_category_column(sessions)
-    sessions = add_season_column(sessions)
-    return sessions
+def load_report_data(_csv_mtime: float) -> pd.DataFrame:
+    """Prepared, MD-labelled sessions. Keyed on the CSV's mtime so a sync
+    invalidates the cache without a restart."""
+    raw = load_sessions(DEFAULT_SESSIONS_PATH)
+    if raw.empty:
+        return raw
+    return add_md_labels(prepare_sessions(raw))
 
 
-def _show_table(df: pd.DataFrame) -> None:
-    display = humanize_columns(df)
-    st.dataframe(display, use_container_width=True, hide_index=True, column_config=numeric_column_config(display))
+def _default_season(sessions: pd.DataFrame, seasons: list[str]) -> str:
+    """Latest season with an official match — a brand-new pre-season holding a
+    single friendly makes a thin report to open on."""
+    with_matches = sessions.loc[sessions["match_category"] == cfg.OFFICIAL_MATCH, "season"]
+    return with_matches.max() if not with_matches.empty else seasons[0]
 
 
-def _metric_label(metric: str) -> str:
-    return DISPLAY_LABELS.get(metric, metric)
+def _sync_from_inputs() -> None:
+    state = st.session_state
+    start, end = state["date_from"], state["date_to"]
+    if start > end:
+        start, end = end, start
+        state["date_from"], state["date_to"] = start, end
+    state["date_range"] = (start, end)
 
 
-def _add_session_form() -> None:
-    st.subheader("Add a new session")
-    with st.form("add_session", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            date = st.date_input("Date")
-            session_kind = st.selectbox("Session kind", ["training", "game"])
-            session_type = st.text_input("Session type / label", placeholder="e.g. Treino Terça-Feira")
-        with col2:
-            duration_min = st.number_input("Duration (min)", min_value=0.0, step=1.0)
-            total_distance_m = st.number_input("Total distance (m)", min_value=0.0, step=10.0)
-            sprint_distance_m = st.number_input("Sprint distance (m)", min_value=0.0, step=10.0)
-            high_speed_distance_m = st.number_input("High-speed distance (m)", min_value=0.0, step=10.0)
-        with col3:
-            top_speed_kmh = st.number_input("Top speed (km/h)", min_value=0.0, step=0.1)
-            sprints_total = st.number_input("Sprints (#)", min_value=0.0, step=1.0)
-            accelerations = st.number_input("Accelerations (#)", min_value=0.0, step=1.0)
-            decelerations = st.number_input("Decelerations (#)", min_value=0.0, step=1.0)
+def _sync_from_slider() -> None:
+    state = st.session_state
+    state["date_from"], state["date_to"] = state["date_range"]
 
-        calories = st.number_input("Calories", min_value=0.0, step=10.0)
 
-        competition_type, was_starter = None, None
-        if session_kind == "game":
-            st.caption("Competition type decides whether this counts as an official match or a practice match in the analysis.")
-            gcol1, gcol2 = st.columns(2)
-            with gcol1:
-                competition_type = st.selectbox("Competition type", ["Campeonato", "Taça", "Treino"])
-            with gcol2:
-                was_starter = st.checkbox("Started the match", value=True)
+def sidebar(sessions: pd.DataFrame) -> gps_report.ReportScope:
+    body_seasons = set(gps_analysis._load_body()[0].get("season", pd.Series(dtype=str)).dropna().unique())
+    seasons = sorted(set(sessions["season"].unique()) | body_seasons, reverse=True)
+    default = _default_season(sessions, seasons)
 
-        notes = st.text_area("Notes", placeholder="Optional")
-        submitted = st.form_submit_button("Add session")
+    player_slot = st.sidebar.container()  # player block sits above the filters, as in the reference
+    season = st.sidebar.selectbox("Season", seasons, index=seasons.index(default), key="season")
+    player = cfg.PLAYER
+    player_slot.html(
+        f'<div class="gps-player"><div class="name">{player["name"]}</div>'
+        f'<div class="meta">{player["position"]}<br>Season {season}</div></div>'
+    )
 
-        if submitted:
-            append_session(
-                {
-                    "date": str(date),
-                    "session_kind": session_kind,
-                    "session_type": session_type or None,
-                    "duration_min": duration_min or None,
-                    "total_distance_m": total_distance_m or None,
-                    "sprint_distance_m": sprint_distance_m or None,
-                    "high_speed_distance_m": high_speed_distance_m or None,
-                    "top_speed_kmh": top_speed_kmh or None,
-                    "sprints_total": sprints_total or None,
-                    "accelerations": accelerations or None,
-                    "decelerations": decelerations or None,
-                    "calories": calories or None,
-                    "competition_type": competition_type,
-                    "was_starter": was_starter,
-                    "notes": notes or None,
-                },
-                path=DEFAULT_SESSIONS_PATH,
-            )
-            st.cache_data.clear()
-            st.success("Session added.")
-            st.rerun()
+    season_dates = sessions.loc[sessions["season"] == season, "date"]
+    if season_dates.empty:
+        start_year = int(season[:4])
+        low = high = pd.Timestamp(year=start_year, month=7, day=1).date()
+    else:
+        low, high = season_dates.min().date(), season_dates.max().date()
+
+    state = st.session_state
+    if state.get("_range_season") != season:
+        state["date_from"], state["date_to"], state["date_range"] = low, high, (low, high)
+        state["_range_season"] = season
+
+    st.sidebar.html('<div class="gps-sidebar-label">Date</div>')
+    left, right = st.sidebar.columns(2)
+    left.date_input("From", key="date_from", min_value=low, max_value=high, on_change=_sync_from_inputs, format="DD/MM/YYYY")
+    right.date_input("To", key="date_to", min_value=low, max_value=high, on_change=_sync_from_inputs, format="DD/MM/YYYY")
+    if low < high:
+        st.sidebar.slider("Date range", min_value=low, max_value=high, key="date_range", on_change=_sync_from_slider,
+                          format="DD MMM", label_visibility="collapsed")
+
+    type_label = st.sidebar.radio("Session type", list(cfg.SESSION_TYPE_FILTERS), key="session_type")
+    focus = st.sidebar.selectbox(
+        "Focus metric", cfg.FOCUS_METRICS, format_func=lambda m: cfg.METRICS[m].label, key="focus_metric",
+        help="Drives the load/ACWR chart, the % of match demand bars and the microcycle profile.",
+    )
+    with st.sidebar.expander("Report settings"):
+        change_mode = st.radio("Weekly change basis", list(cfg.CHANGE_MODES), format_func=cfg.CHANGE_MODES.get,
+                               index=list(cfg.CHANGE_MODES).index(cfg.DEFAULT_CHANGE_MODE), key="change_mode")
+        acwr_method = st.radio("ACWR method", ["rolling", "ewma"], index=["rolling", "ewma"].index(cfg.ACWR_METHOD),
+                               format_func={"rolling": "Rolling 4-week mean", "ewma": "EWMA"}.get, key="acwr_method")
+
+    if not sessions.empty:
+        st.sidebar.caption(f"Data to {sessions['date'].max():%d %b %Y} · {len(sessions)} sessions in the log.")
+    if source_is_newer():
+        st.sidebar.warning("The STATSports workbook is newer than the CSV — run `python -m football_stats.gps.sync`.", icon="🔄")
+
+    start, end = state["date_from"], state["date_to"]
+    return gps_report.ReportScope(
+        sessions=sessions, season=season, start=pd.Timestamp(start), end=pd.Timestamp(end),
+        categories=cfg.SESSION_TYPE_FILTERS[type_label], type_label=type_label,
+        focus_metric=focus, change_mode=change_mode, acwr_method=acwr_method,
+    )
 
 
 def main() -> None:
-    st.title("🏃 GPS Performance Analysis")
-
-    sessions = _load()
+    st.html(charts.page_css())
+    sessions = load_report_data(DEFAULT_SESSIONS_PATH.stat().st_mtime if DEFAULT_SESSIONS_PATH.exists() else 0.0)
     if sessions.empty:
-        st.warning("No GPS sessions found yet. Add one below to get started.")
-        _add_session_form()
+        st.warning("No GPS sessions found. Run `python -m football_stats.gps.sync` to build the log from the workbook.")
         return
 
-    seasons = sorted(sessions["season"].unique())
-    season_choice = st.sidebar.selectbox("Season", [ALL_SEASONS, *seasons])
+    scope_holder: dict[str, gps_report.ReportScope] = {}
 
-    categories = st.sidebar.multiselect(
-        "Match category",
-        MATCH_CATEGORIES,
-        default=MATCH_CATEGORIES,
-        format_func=lambda c: MATCH_CATEGORY_LABELS[c],
-    )
+    def report_page() -> None:
+        gps_report.render(scope_holder["scope"])
 
-    min_date, max_date = sessions["date"].min().date(), sessions["date"].max().date()
-    date_range = st.sidebar.date_input("Date range", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+    def analysis_page() -> None:
+        scope = scope_holder["scope"]
+        gps_analysis.render(scope.filtered, scope.sessions, scope.season, scope.start, scope.end)
 
-    category_scope = sessions[sessions["match_category"].isin(categories)]
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        start, end = date_range
-        category_scope = category_scope[(category_scope["date"] >= pd.Timestamp(start)) & (category_scope["date"] <= pd.Timestamp(end))]
-
-    filtered = category_scope if season_choice == ALL_SEASONS else category_scope[category_scope["season"] == season_choice]
-
-    analyzer = PerformanceAnalyzer(filtered)
-    # Season Summary always reflects every season in scope, regardless of the Season selector above.
-    overall_analyzer = PerformanceAnalyzer(category_scope)
-
-    tabs = st.tabs(
+    navigation = st.navigation(
         [
-            "Overview",
-            "Monthly",
-            "Weekly Load",
-            "Intensity",
-            "Trends",
-            "Baseline",
-            "Quality",
-            "Season Summary",
-            "Performance Insights",
-            "Add Session",
+            st.Page(report_page, title="GPS Report", icon="📊", default=True),
+            st.Page(analysis_page, title="More analysis", icon="🔬", url_path="analysis"),
         ]
     )
-
-    with tabs[0]:
-        st.subheader("Sessions")
-        _show_table(filtered.sort_values("date", ascending=False))
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total sessions", len(filtered))
-        col2.metric("Total distance (km)", round(filtered["total_distance_m"].sum() / 1000, 1))
-        col3.metric("Season", season_choice)
-
-    with tabs[1]:
-        st.subheader("Monthly comparison")
-        st.pyplot(analyzer.plot_monthly_comparison())
-
-    with tabs[2]:
-        st.subheader("Weekly load")
-        if season_choice == ALL_SEASONS and len(seasons) > 1:
-            st.info("Week numbers restart every season — pick a specific season above for a meaningful weekly breakdown.")
-        weekly = analyzer.weekly_load()
-        if weekly.empty:
-            st.info("No data for the current filters.")
-        else:
-            for category, label in WEEKLY_GROUPS:
-                st.markdown(f"**{label}**")
-                cols = ["week"] + [f"{category}_{metric}" for metric in WEEKLY_METRICS]
-                _show_table(weekly[[c for c in cols if c in weekly.columns]])
-            fig = analyzer.plot_weekly_load_heatmap()
-            if fig is not None:
-                st.plotly_chart(fig, use_container_width=True)
-
-    with tabs[3]:
-        st.subheader("Training vs official vs practice intensity")
-        st.pyplot(analyzer.plot_intensity_radar())
-        st.subheader("Starter vs substitute (all games)")
-        _show_table(analyzer.starter_vs_substitute())
-
-    with tabs[4]:
-        st.subheader("Performance trends")
-        metric_options = ["total_distance_m", "sprint_distance_m", "high_speed_distance_m", "top_speed_kmh"]
-        chosen = st.multiselect("Metrics", metric_options, default=["total_distance_m"], format_func=_metric_label)
-        if chosen:
-            st.pyplot(analyzer.plot_performance_trends(chosen))
-
-        st.subheader("Best / worst sessions")
-        col1, col2 = st.columns(2)
-        with col1:
-            metric = st.selectbox("Metric", metric_options, format_func=_metric_label, key="best_worst_metric")
-        with col2:
-            category = st.selectbox(
-                "Match category", MATCH_CATEGORIES, format_func=lambda c: MATCH_CATEGORY_LABELS[c], key="best_worst_category"
-            )
-        st.pyplot(analyzer.plot_best_worst(metric=metric, category=category))
-
-    with tabs[5]:
-        st.subheader("Baseline comparison")
-        st.caption(
-            "Position-specific baselines sourced from published research (Di Salvo et al. 2007 for distance "
-            "metrics; a separate GPS accel/decel study for accelerations/decelerations) — not the old "
-            "spreadsheet's unsourced flat baseline. Training baselines are estimated from the match baseline "
-            "using a documented intensity ratio, since no position-specific training study was found. "
-            "Full sourcing: `docs/gps_analysis.md`."
-        )
-
-        bcol1, bcol2 = st.columns(2)
-        with bcol1:
-            position = st.selectbox(
-                "Position", POSITIONS, format_func=lambda p: POSITION_LABELS[p], key="baseline_position"
-            )
-        with bcol2:
-            category = st.selectbox(
-                "Match category", MATCH_CATEGORIES, format_func=lambda c: MATCH_CATEGORY_LABELS[c], key="baseline_category"
-            )
-
-        mcol1, mcol2, mcol3 = st.columns(3)
-        mcol1.metric("Avg Training Duration (min)", analyzer.average_minutes("training"))
-        mcol2.metric("Avg Official Match Duration (min)", analyzer.average_minutes("official_match"))
-        mcol3.metric("Avg Practice Match Duration (min)", analyzer.average_minutes("practice_match"))
-        st.caption(
-            "Baselines are expressed per 90 minutes; the averages above show how far your actual session "
-            "length is from that basis. A session much shorter than 90 minutes (e.g. a late substitute "
-            "appearance) can show an inflated per-90 rate for bursty metrics like sprint distance — the rate "
-            "is real, but extrapolating a short high-intensity spell across a full 90 minutes overstates what "
-            "a full match at that pace would actually look like."
-        )
-
-        _show_table(analyzer.compare_to_baseline(category, position=position))
-
-    with tabs[6]:
-        st.subheader("Monthly quality evolution")
-        st.caption("Blends training (60%) and official-match (40%) intensity. Practice matches aren't included.")
-        fig = analyzer.plot_quality_evolution()
-        if fig is not None:
-            st.pyplot(fig)
-        else:
-            st.info("Not enough data to compute a quality trend yet.")
-
-    with tabs[7]:
-        st.subheader("Season Summary")
-        st.caption("Always covers every season (ignores the Season filter above) — this is the career-wide view.")
-        summary = overall_analyzer.season_summary()
-        _show_table(summary)
-        if len(summary) > 1:
-            st.bar_chart(summary.set_index("season")["total_distance_km"])
-            st.line_chart(summary.set_index("season")["avg_quality_score"])
-        else:
-            st.info("Only one season of data so far — this becomes more useful once a second season is added.")
-
-    with tabs[8]:
-        st.subheader("Performance Insights")
-        st.caption(
-            "Per-90 normalization and percentile comparison are adapted from SkillCorner's physical-data "
-            "methodology; ACWR/Monotony/Strain are general sports science, not SkillCorner-specific. See "
-            "the Methodology section below for exactly what's borrowed vs. adapted vs. general."
-        )
-        st.caption(
-            "Everything on this tab uses the **same scope as the sidebar filters above** — Season, Match "
-            "category, and Date range. Switching those changes every gauge and table here too."
-        )
-
-        scope = analyzer.sessions.sort_values("date")
-
-        st.markdown("**Load monitoring**")
-        lcol1, lcol2, lcol3 = st.columns(3)
-
-        with lcol1:
-            acwr_series = compute_acwr(scope).dropna()
-            if not acwr_series.empty:
-                latest_acwr = acwr_series.iloc[-1]
-                st.plotly_chart(acwr_gauge(latest_acwr), use_container_width=True)
-                st.caption(f"Zone: **{classify_acwr(latest_acwr)}** — 7-day load vs. 28-day average.")
-            else:
-                st.info("Not enough data for ACWR yet.")
-
-        weekly = weekly_monotony_and_strain(scope).dropna(subset=["monotony"])
-        with lcol2:
-            if not weekly.empty:
-                latest_monotony = weekly.iloc[-1]["monotony"]
-                st.plotly_chart(monotony_gauge(latest_monotony), use_container_width=True)
-                st.caption(f"Zone: **{classify_monotony(latest_monotony)}** — mean daily load ÷ its SD, this week.")
-            else:
-                st.info("Not enough data for training monotony yet (need 2+ sessions in a week).")
-        with lcol3:
-            if not weekly.empty:
-                latest_strain = weekly.iloc[-1]["strain"]
-                typical_strain = weekly["strain"].median()
-                st.plotly_chart(strain_gauge(latest_strain, typical_strain), use_container_width=True)
-                st.caption("Weekly load × monotony, vs. your own median week (black line) — no universal scale exists for this one.")
-            else:
-                st.info("Not enough data for training strain yet.")
-
-        st.markdown("---")
-        st.markdown("**Form**")
-        gcol1, gcol2 = st.columns(2)
-
-        with gcol1:
-            quality = analyzer.monthly_quality_metric()
-            if not quality.empty:
-                st.plotly_chart(quality_gauge(quality.iloc[-1]["combined_quality"]), use_container_width=True)
-                st.caption(f"Latest month: {quality.iloc[-1]['month_label']}.")
-            else:
-                st.info("Not enough data for a quality score yet.")
-
-        with gcol2:
-            speeds = robust_top_speed(scope).dropna()
-            if not speeds.empty:
-                personal_best = scope["top_speed_kmh"].max()
-                st.plotly_chart(top_speed_gauge(speeds.iloc[-1], personal_best), use_container_width=True)
-                st.caption("Rolling 95th-percentile of the last 10 sessions' top speed — see Methodology.")
-            else:
-                st.info("Not enough data for a robust top speed yet.")
-
-        st.markdown("---")
-        st.markdown("**Latest session, ranked against the current filters' history**")
-        st.caption(
-            "\"Current filters\" = the Season / Match category / Date range picked in the sidebar — the same "
-            "`scope` this whole tab uses, not a separate filter. **How the percentile works**: it's the share "
-            "of sessions *within that scope* whose value was lower than your latest session's — e.g. 80% means "
-            "4 out of 5 sessions in the current scope had less of that metric than your latest one did. It's "
-            "relative to your own recorded history in the current scope, not to any external/positional "
-            "benchmark (that comparison lives in the Baseline tab instead)."
-        )
-        pcol1, pcol2, pcol3, pcol4 = st.columns(4)
-        rank_metric_options = ["total_distance_m", "sprint_distance_m", "high_speed_distance_m", "top_speed_kmh"]
-        with pcol1:
-            rank_metric = st.selectbox("Metric", rank_metric_options, format_func=_metric_label, key="percentile_metric")
-        latest_row = scope.dropna(subset=[rank_metric]).tail(1)
-        if not latest_row.empty:
-            rank = percentile_rank(scope[rank_metric], latest_row.iloc[0][rank_metric])
-            with pcol2:
-                st.plotly_chart(percentile_gauge(rank, f"{_metric_label(rank_metric)} Percentile"), use_container_width=True)
-            intensity = add_intensity_ratios(scope).iloc[-5:]
-            with pcol3:
-                avg_hi_pct = intensity["high_speed_pct"].mean()
-                st.plotly_chart(intensity_gauge(avg_hi_pct, "High-Speed % (last 5)", max_val=max(avg_hi_pct * 2, 10)), use_container_width=True)
-            with pcol4:
-                avg_sprint_pct = intensity["sprint_pct"].mean()
-                st.plotly_chart(intensity_gauge(avg_sprint_pct, "Sprint % (last 5)", max_val=max(avg_sprint_pct * 2, 10)), use_container_width=True)
-        else:
-            st.info(f"No sessions with {_metric_label(rank_metric)} recorded yet.")
-
-        st.markdown("---")
-        st.markdown("**Per-90-minute rates** — comparable across sessions regardless of duration")
-        per90 = add_per90_columns(scope)
-        per90_cols = ["date", "session_kind", "match_category"] + [f"{m}_per90" for m in PER90_METRICS if f"{m}_per90" in per90.columns]
-        _show_table(per90[per90_cols].sort_values("date", ascending=False).head(20))
-
-        with st.expander("Methodology — what's SkillCorner, what's adapted, what's general sports science"):
-            st.markdown(
-                """
-**Directly from SkillCorner's methodology** ([skillcornerviz](https://github.com/liamMichaelBailey/skillcornerviz),
-their open-source physical-data toolkit):
-- **Per-90 normalization** — `add_standard_metrics()` in `skillcorner_physical_utils.py` normalizes distance/accel/decel/sprint
-  counts per 90 minutes so sessions of different lengths are comparable. Same idea, applied above.
-- **Percentile-based comparison** — their `summary_table.py`/`table_grid.py` color tables by percentile rather than raw value.
-  We have no peer group (single player), so this ranks a session against the *player's own* history instead — see the
-  explanation above the percentile gauge for exactly how that's computed.
-- **HI/Sprint thresholds** — SkillCorner defines High-Intensity distance as **>19.8 km/h** and Sprint distance as
-  **>25.2 km/h**. We don't recompute these (no raw speed stream to threshold), but this repo's `high_speed_distance_m`/
-  `sprint_distance_m` categories already match that convention.
-
-**Inspired by, but explicitly *not*, a SkillCorner metric:**
-- **Robust Top Speed** — SkillCorner's real **PSV-99** is the 99th percentile over thousands of raw in-match speed
-  *samples*, designed to discount one glitchy sample. We only have one already-aggregated max speed per *session* — over
-  a ~10-session window the 99th percentile would just equal "the max of the window" (no noise-robustness gained), so this
-  uses the **95th percentile of the last 10 sessions'** top speeds instead. Different granularity, same spirit.
-
-**General sports science, not SkillCorner-specific** (moved to `gps/load_monitoring.py`):
-- **ACWR (Acute:Chronic Workload Ratio)** — Gabbett (2016). 7-day load ÷ 28-day average load. `<0.8` undertrained,
-  `0.8–1.3` optimal, `1.3–1.5` elevated risk, `>1.5` high risk.
-- **Training Monotony & Strain** — Foster (1998). Monotony = mean daily load ÷ its standard deviation over the week
-  (high monotony = every day looks the same, no easier days); Strain = weekly load × monotony (a big week that was
-  *also* monotonous — the combination linked to overtraining risk more than either figure alone). ~2.0+ monotony with
-  a high weekly load is a commonly cited caution point, not a validated hard threshold. Strain has no fixed scale, so
-  its gauge is relative to your own median week instead of fixed colored zones.
-- Both use `total_distance_m` as the load input, not session-RPE (the field's more standard input) — this dataset
-  doesn't collect a subjective-exertion rating. A real substitution, disclosed rather than hidden.
-
-Full writeup with source links: `docs/skillcorner_metrics.md` and `docs/load_monitoring.md` in the repo.
-                """
-            )
-
-    with tabs[9]:
-        _add_session_form()
+    scope_holder["scope"] = sidebar(sessions)
+    navigation.run()
 
 
-if __name__ == "__main__":
-    main()
+main()

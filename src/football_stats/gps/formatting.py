@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from football_stats.gps.config import SESSION_CATEGORY_LABELS
+
 DISPLAY_LABELS: dict[str, str] = {
     "date": "Date",
     "season": "Season",
@@ -33,13 +35,51 @@ DISPLAY_LABELS: dict[str, str] = {
     "decelerations": "Decelerations (#)",
     "calories": "Calories",
     "notes": "Notes",
+    # Fixture-link columns (gps/match_link.py)
+    "fixture_date": "Fixture Date",
+    "fixture_match": "Fixture Link",
+    "days_from_fixture": "Days from Fixture",
+    "competition": "Competition",
+    "matchweek": "Matchweek",
+    "venue": "Venue",
+    "opponent": "Opponent",
+    "goals_for": "Goals For",
+    "goals_against": "Goals Against",
+    "scoreline": "Score",
+    "team_result": "Team Result",
+    "official_minutes": "Official Minutes",
+    "minutes_source": "Minutes Source",
+    "short_appearance": "Rate Extrapolated",
+    # Report columns (gps/cleaning.py, gps/microcycle.py)
+    "md_label": "MD",
+    "minutes_played": "Minutes (sheet, else GPS)",
+    "hsr_sprint_m": "HSR & Sprint (m)",
+    "hsr_m": "HSR 19.8–25.2 (m)",
+    "hia": "High-Intensity Actions",
+    "m_per_min": "m/min",
+    "unused_sub": "Unused Sub",
+    "has_gps": "Has GPS Data",
+    "minutes_delta": "GPS − Match Sheet (min)",
+    "flag": "Flag",
+    "n": "Matches",
+    "sessions": "Sessions",
+    "mean_minutes": "Avg Minutes",
+    # Body-composition link columns (body/gps_link.py)
+    "assessment_date": "Assessment Date",
+    "days_since_assessment": "Days Since Assessment",
+    "window_start": "From",
+    "window_end": "To",
+    "days": "Days",
+    "sessions_per_week": "Sessions / Week",
+    "km_per_week": "km / Week",
+    "football_kcal_per_day": "Football kcal / Day",
+    "total_calories": "Total Calories",
+    "total_duration_min": "Total Duration (min)",
+    "plausible_range": "Plausible Range",
+    "source_file": "Source Report",
 }
 
-MATCH_CATEGORY_LABELS: dict[str, str] = {
-    "training": "Training",
-    "official_match": "Official Match",
-    "practice_match": "Practice Match",
-}
+MATCH_CATEGORY_LABELS: dict[str, str] = dict(SESSION_CATEGORY_LABELS)
 
 _AGG_SUFFIX_LABELS = {"mean": "Avg", "sum": "Total", "max": "Max", "count": "#"}
 _WEEKLY_CATEGORY_LABELS = {**MATCH_CATEGORY_LABELS, "total": "Overall"}
@@ -53,6 +93,10 @@ def _humanize_one(col: str) -> str:
         return MATCH_CATEGORY_LABELS[col]
     if col == "duration_min_count":
         return "Sessions"
+    if col.endswith("_per90_official"):
+        base = col[: -len("_per90_official")]
+        if base in DISPLAY_LABELS:
+            return f"{DISPLAY_LABELS[base]} per 90 (match sheet)"
     if col.endswith("_per90"):
         base = col[: -len("_per90")]
         if base in DISPLAY_LABELS:
@@ -70,6 +114,12 @@ def _humanize_one(col: str) -> str:
         for metric in _WEEKLY_METRICS:
             if col == f"{category}_{metric}":
                 return f"{category_label} – {DISPLAY_LABELS[metric]}"
+
+    if "_" not in col and col != col.lower():
+        # Already a human label -- body-composition metric names arrive as
+        # "Massa Isenta de Gordura (Δ)", which Title Case would mangle into
+        # "Massa Isenta De Gordura".
+        return col
 
     return col.replace("_", " ").title()
 

@@ -2,10 +2,11 @@ pandas>=2.0
 numpy>=1.24
 scipy>=1.10
 openpyxl>=3.1
-matplotlib>=3.7
-seaborn>=0.12
-plotly>=5.18
-streamlit>=1.30
+# Charts are Plotly only. 5.19+ for rounded bar ends (marker.cornerradius).
+plotly>=5.19
+# 1.40+ for st.navigation pages, st.html and keyed-container CSS classes.
+streamlit>=1.40
+toml>=0.10
 selenium>=4.15
 beautifulsoup4>=4.12
 pyyaml>=6.0

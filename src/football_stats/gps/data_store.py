@@ -101,7 +101,10 @@ def _clean_jogos(xlsx_path: Path) -> pd.DataFrame:
     )
     df["sprints_1st_half"] = pd.to_numeric(df["sprints_1st_half"], errors="coerce")
     df["sprints_2nd_half"] = pd.to_numeric(df["sprints_2nd_half"], errors="coerce")
-    df["sprints_total"] = df["sprints_1st_half"].fillna(0) + df["sprints_2nd_half"].fillna(0)
+    # Missing only when both halves are: a friendly with no GPS file has no
+    # sprint count, and summing two blanks into 0 recorded a measurement that
+    # never happened.
+    df["sprints_total"] = df["sprints_1st_half"].add(df["sprints_2nd_half"], fill_value=0)
     return df
 
 

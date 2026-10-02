@@ -27,6 +27,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from football_stats.gps import config as cfg
+
 PER90_METRICS = [
     "total_distance_m",
     "sprint_distance_m",
@@ -68,7 +70,7 @@ def add_intensity_ratios(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def robust_top_speed(df: pd.DataFrame, window: int = 10, percentile: int = 95, speed_col: str = "top_speed_kmh") -> pd.Series:
+def robust_top_speed(df: pd.DataFrame, window: int = cfg.ROBUST_SPEED_WINDOW, percentile: int = cfg.ROBUST_SPEED_PERCENTILE, speed_col: str = "top_speed_kmh") -> pd.Series:
     """Rolling percentile of recent sessions' top speed — a session-level
     adaptation of SkillCorner's PSV-99, not the metric itself.
 
