@@ -15,3 +15,7 @@ textColor = "#FFFFFF"
 [browser]
 # Personal data: no usage statistics leave the machine.
 gatherUsageStats = false
+
+[server]
+# Personal data: serve on this machine only, not to the local network.
+address = "localhost"

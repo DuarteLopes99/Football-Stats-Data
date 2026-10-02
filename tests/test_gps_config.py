@@ -83,3 +83,7 @@ def test_sync_diff_reports_added_and_removed_rows():
                         "session_type": ["Treino Quinta-Feira", "Jogo Treino Fiães B (CASA) 6-1"]})
     report = diff(old, new)
     assert report.rows_before == 1 and report.rows_after == 2 and len(report.added) == 2 and len(report.removed) == 1
+
+
+def test_dashboard_is_served_on_this_machine_only():
+    assert toml.load(REPO_ROOT / ".streamlit" / "config.toml")["server"]["address"] == "localhost"

@@ -52,7 +52,18 @@ pytest tests/                                   # 153 tests, ~3s
 ```
 
 Run both from the **repo root**: that is where Streamlit picks up the dark theme
-in `.streamlit/config.toml`. The dashboards add `src/` to the path themselves, so
+in `.streamlit/config.toml` (which also keeps the server on `localhost` only and
+usage statistics off).
+
+**One-click launch (macOS):** `tools/open_gps_dashboard.command` starts the GPS
+dashboard on port 8520 and opens it in the browser — or just opens it if it's
+already running. Link it to the Desktop once:
+
+```bash
+ln -s "$PWD/tools/open_gps_dashboard.command" ~/Desktop/"GPS Dashboard.command"
+```
+
+Double-click the link; close its Terminal window to stop the dashboard. The dashboards add `src/` to the path themselves, so
 they run from a fresh clone after `pip install -r requirements.txt`.
 
 ## GPS Report
