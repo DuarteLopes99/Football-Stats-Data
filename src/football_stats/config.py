@@ -1,9 +1,12 @@
-"""Season/competition configuration.
+"""Paths, plus the fixture-context configuration used by ``gps/match_link.py``.
 
-Each season is described declaratively (team slugs, their zerozero.pt fixtures-page
-URLs, and the exact competition name to filter on) so the scraping/processing/
-prediction pipeline in the rest of ``football_stats`` never hardcodes a team or
-season — new seasons or divisions are added here, not by editing pipeline code.
+The league side (zerozero.pt scraping, league tables, the Monte Carlo season
+model) moved to its own repository, **football-data-analysis**. What stays here
+is only what the GPS dashboard's fixture link needs: where the primary team's
+raw fixture export lives (``data/seasons/<key>/raw/<primary_team>_fixtures.csv``),
+which competitions count as official, and how zerozero display names map to
+slugs. That raw file is produced by football-data-analysis's pipeline and copied
+in; nothing in this repo scrapes.
 """
 
 from __future__ import annotations
@@ -24,16 +27,11 @@ class SeasonConfig:
     """Human-readable name shown in dashboards."""
 
     competition_name: str
-    """Exact zerozero.pt competition string used to filter scraped fixture rows.
-
-    This is the **league** only. It drives the table and the Monte Carlo
-    prediction, which are defined over a single round-robin competition — cup
-    ties and play-off rounds would corrupt both. Other competitions the team
-    played in the same season are declared in ``extra_competitions``.
-    """
+    """Exact zerozero.pt league competition string. Cup ties and play-off
+    rounds the team also played are declared in ``extra_competitions``."""
 
     primary_team: str
-    """Slug (key into ``teams``) of the team this season's data collection is centered on."""
+    """Slug of the team whose raw fixture export the GPS fixture link reads."""
 
     teams: dict[str, str] = field(default_factory=dict)
     """Team slug -> zerozero.pt "jogos" (fixtures) page URL."""
@@ -42,15 +40,10 @@ class SeasonConfig:
     """zerozero.pt display name (as it appears in scraped tables) -> team slug."""
 
     extra_competitions: tuple[str, ...] = ()
-    """Other competitions the primary team played this season — cup runs and
-    play-off rounds.
-
-    Deliberately **not** used by the league table or the predictor: those are
-    defined over ``competition_name``'s round-robin alone. This exists so that
-    GPS match sessions from those competitions can still be recognised as
-    official matches and linked to a fixture (see ``gps/match_link.py``) rather
-    than being silently unmatchable.
-    """
+    """Other competitions the primary team played this season (cup runs,
+    play-off rounds), so GPS match sessions from them can still be recognised
+    as official matches and linked to a fixture (see ``gps/match_link.py``)
+    rather than being silently unmatchable."""
 
     @property
     def dir(self) -> Path:
@@ -59,12 +52,6 @@ class SeasonConfig:
     @property
     def raw_dir(self) -> Path:
         path = self.dir / "raw"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    @property
-    def processed_dir(self) -> Path:
-        path = self.dir / "processed"
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -115,54 +102,8 @@ MANSORES_2025_26 = SeasonConfig(
     ),
 )
 
-FERMEDO_2024_25 = SeasonConfig(
-    key="fermedo_2024_25",
-    label="UD Fermedo — AF Aveiro 2ª Divisão Zona Norte 24/25",
-    competition_name="AF Aveiro 2ª Divisão Zona Norte 24/25",
-    primary_team="fermedo",
-    teams={
-        "fermedo": "https://www.zerozero.pt/equipa/ud-fermedo/37219/jogos?grp=1&epoca_id=154",
-        "caldas_sjorge": "https://www.zerozero.pt/equipa/caldas-s-jorge/16113/jogos?grp=1",
-        "macieira_cambra": "https://www.zerozero.pt/equipa/macieira-cambra/10975/jogos?grp=1&epoca_id=154",
-        "nege": "https://www.zerozero.pt/equipa/nege/329973/jogos?grp=1",
-        "sanguedo": "https://www.zerozero.pt/equipa/sanguedo/6472/jogos?grp=1&epoca_id=154",
-        "valega": "https://www.zerozero.pt/equipa/ccr-valega/18244/jogos?grp=1&epoca_id=154",
-        "macieirense": "https://www.zerozero.pt/equipa/macieirense/10970/jogos?grp=1&epoca_id=154",
-        "são_martinho": "https://www.zerozero.pt/equipa/ccr-sao-martinho/16114/jogos?grp=1&epoca_id=154",
-        "vila_viçosa": "https://www.zerozero.pt/equipa/ccr-vila-vicosa/216307/jogos?grp=1&epoca_id=154",
-        "rocas_vouga": "https://www.zerozero.pt/equipa/rocas-do-vouga/327358/jogos?grp=1&epoca_id=154",
-        "são_vicente_pereira": "https://www.zerozero.pt/equipa/s-vicente-pereira/312991/jogos?grp=1&epoca_id=154",
-        "fajoes": "https://www.zerozero.pt/equipa/gd-fajoes/6476/jogos?grp=1",
-        "milheiroense": "https://www.zerozero.pt/equipa/milheiroense/3607/jogos?grp=1&epoca_id=154",
-        "flograde_b": "https://www.zerozero.pt/equipa/florgrade-fc/275834/jogos?grp=1&epoca_id=154",
-        "santiais": "https://www.zerozero.pt/equipa/santiais/11520/jogos?grp=1&epoca_id=154",
-        "cucujaes": "https://www.zerozero.pt/equipa/at-cucujaes/312992/jogos?grp=1",
-    },
-    team_name_mapping={
-        "UD Fermedo": "fermedo",
-        "Caldas S. Jorge": "caldas_sjorge",
-        "Macieira Cambra": "macieira_cambra",
-        "NEGES23": "nege",
-        "Sanguedo": "sanguedo",
-        "CCR Válega": "valega",
-        "Macieirense": "macieirense",
-        "CCR São Martinho": "são_martinho",
-        "CCR Vila Viçosa": "vila_viçosa",
-        "Rocas do VougaS23": "rocas_vouga",
-        "S. Vicente PereiraS23": "são_vicente_pereira",
-        "S. Vicente Pereira": "são_vicente_pereira",
-        "Milheiroense": "milheiroense",
-        "Florgrade FCB": "flograde_b",
-        "Florgrade FC": "flograde_b",
-        "Santiais": "santiais",
-        "At. CucujãesS23": "cucujaes",
-        "GD Fajões": "fajoes",
-    },
-)
-
 SEASONS: dict[str, SeasonConfig] = {
     MANSORES_2025_26.key: MANSORES_2025_26,
-    FERMEDO_2024_25.key: FERMEDO_2024_25,
 }
 
 

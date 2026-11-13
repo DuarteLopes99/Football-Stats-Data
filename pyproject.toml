@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "football-stats"
 version = "0.1.0"
-description = "Season/player stats + prediction and GPS performance analysis for amateur football teams"
+description = "Personal GPS performance dashboard (training + match load, body composition) for an amateur footballer"
 requires-python = ">=3.9"
 
 [tool.setuptools.packages.find]

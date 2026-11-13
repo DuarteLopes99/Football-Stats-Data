@@ -97,8 +97,8 @@ def load_primary_team_fixtures(season: SeasonConfig) -> pd.DataFrame:
     Reads the team's raw scrape (the processed tables carry no date, so they
     cannot be joined to dated GPS sessions). ``Result`` is always
     "home score-away score" regardless of which side the tracked team is on —
-    the same trap that produced the home/away swap bug fixed in
-    ``season/fixtures.py`` — so goals are assigned via ``Location``, not by
+    the same trap that produced the home/away swap bug fixed in the season
+    model's ``fixtures.py`` (now core/fixtures.py in football-data-analysis) — so goals are assigned via ``Location``, not by
     reading the score left-to-right.
     """
     path = season.raw_dir / f"{season.primary_team}_fixtures.csv"
@@ -343,7 +343,8 @@ def link_coverage(linked: pd.DataFrame) -> pd.DataFrame:
 
     Coverage is limited by how recently the fixture scraper was run, not by the
     join: unmatched official sessions are usually matches played after the last
-    scrape (see the season-prediction doc's step 3).
+    scrape. The scraper lives in football-data-analysis; copy its fresh
+    ``raw/<primary_team>_fixtures.csv`` into ``data/seasons/<key>/raw/``.
     """
     if "fixture_match" not in linked.columns:
         raise KeyError("call link_sessions_to_fixtures() first — no fixture_match column")

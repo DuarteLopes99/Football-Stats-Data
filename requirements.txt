@@ -7,7 +7,5 @@ plotly>=5.19
 # 1.40+ for st.navigation pages, st.html and keyed-container CSS classes.
 streamlit>=1.40
 toml>=0.10
-selenium>=4.15
-beautifulsoup4>=4.12
 pyyaml>=6.0
 pytest>=7.4

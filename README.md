@@ -1,26 +1,30 @@
 # Football Stats Data
 
-Two things live in this repo:
+A personal **GPS performance dashboard** for one amateur footballer: training
+and match GPS data (distance, high-speed running, sprints, top speed,
+accelerations) from a STATSports export, analysed within and across seasons.
+Beyond the weekly report it covers **training load** (ACWR, monotony, strain),
+**fatigue and mechanical load** (second-half sprint retention, accel/decel
+load, high-speed exposure), **match context** for official matches (opponent,
+venue, result, and the official match-sheet minutes as the per-90
+denominator), and **body composition** from periodic nutrition reports,
+including an explicit test of whether body composition relates to running
+output at all.
 
-1. **Season stats & prediction** — scrape fixtures/results/player stats from
-   zerozero.pt, compute league tables, and run a Monte Carlo simulation of the
-   remaining fixtures to predict the final table.
-2. **GPS performance analysis** — track training/match GPS data (distance, sprints,
-   top speed, load, etc.) and analyze trends over a season and across seasons.
-   The GPS dashboard also covers **fatigue and mechanical load** (second-half
-   sprint retention, accel/decel load, high-speed exposure), pulls in **league
-   fixture context** for official matches (opponent, venue, result, and the
-   official match-sheet minutes as the per-90 denominator), and tracks
-   **body composition** from periodic nutrition reports — including an explicit
-   test of whether body composition relates to running output at all.
+The dashboard is Streamlit. Everything else is a small, tested Python package
+(`src/football_stats`) that it calls into, so analysis logic lives in reusable
+functions rather than in page code.
 
-Both have a Streamlit dashboard. Everything else is a small, tested Python
-package (`src/football_stats`) that the dashboards call into — the goal is that
-analysis logic lives in reusable functions, not only inside notebook cells.
+> **League tables and the Monte Carlo season prediction moved out.** The
+> zerozero.pt scraper, league table, team strength, season simulation and its
+> evaluation now live in their own notebook-only repository,
+> **football-data-analysis** (sibling folder `Futebol/football-data-analysis`),
+> layered as a generic zerozero.pt data core plus one package per analysis.
+> The only league data left here is the Mansores fixture export that gives GPS
+> match sessions their fixture context (see "Fixture context" below).
 
 📖 **Read the full docs before making changes:**
 [`docs/gps_report.md`](docs/gps_report.md) ·
-[`docs/season_prediction.md`](docs/season_prediction.md) ·
 [`docs/gps_analysis.md`](docs/gps_analysis.md) ·
 [`docs/skillcorner_metrics.md`](docs/skillcorner_metrics.md) ·
 [`docs/position_baselines.md`](docs/position_baselines.md) ·
@@ -46,12 +50,11 @@ older pip inside new venvs, hence the `pip install -U pip` line.
 ## Quickstart
 
 ```bash
-streamlit run dashboards/season_dashboard.py   # league table + Monte Carlo prediction
 streamlit run dashboards/gps_dashboard.py      # GPS Report + More analysis
-pytest tests/                                   # 153 tests, ~3s
+pytest tests/                                   # 145 tests, ~3s
 ```
 
-Run both from the **repo root**: that is where Streamlit picks up the dark theme
+Run it from the **repo root**: that is where Streamlit picks up the dark theme
 in `.streamlit/config.toml` (which also keeps the server on `localhost` only and
 usage statistics off).
 
@@ -63,8 +66,9 @@ already running. Link it to the Desktop once:
 ln -s "$PWD/tools/open_gps_dashboard.command" ~/Desktop/"GPS Dashboard.command"
 ```
 
-Double-click the link; close its Terminal window to stop the dashboard. The dashboards add `src/` to the path themselves, so
-they run from a fresh clone after `pip install -r requirements.txt`.
+Double-click the link; close its Terminal window to stop the dashboard. The
+dashboard adds `src/` to the path itself, so it runs from a fresh clone after
+`pip install -r requirements.txt`.
 
 ## GPS Report
 
@@ -143,21 +147,37 @@ The workbook is only ever read. **The sync overwrites the CSV, it doesn't merge*
 CSV and is lost at the next sync, so add new sessions to the workbook. The
 dashboard's sidebar warns when the workbook is newer than the CSV.
 
+## Fixture context (`data/seasons/`)
+
+Official GPS match sessions get their opponent, venue and result from the
+session label (`gps/match_label.py`), which covers every game. The older
+fixture join (`gps/match_link.py`) is kept and tested, and is still the only
+source of the league's own `competition`/`matchweek`. It reads one file,
+`data/seasons/mansores_2025_26/raw/mansores_fixtures.csv`, configured in
+`src/football_stats/config.py`.
+
+Nothing in this repo scrapes any more. To refresh that file, run the pipeline in
+football-data-analysis (`python -m football_data_analysis.core.scraping.cli mansores_2025_26`)
+and copy the result over. Its `mansores_fixtures.csv` holds league rows only;
+to keep the cup and play-off rows the GPS link also uses, copy
+`mansores_all_competitions.csv` in under the name `mansores_fixtures.csv`.
+See [`docs/match_context.md`](docs/match_context.md).
+
 ## Repository layout
 
 ```
 Football-Stats-Data/
 ├── docs/                    # detailed docs — start here for anything beyond a quick run
-├── src/football_stats/      # the package: scraping, season, players, gps
-├── dashboards/               # Streamlit apps: season_dashboard.py, gps_dashboard.py (shell)
+├── src/football_stats/      # the package: gps, body, config (paths + fixture-link config)
+├── dashboards/               # Streamlit: gps_dashboard.py (shell)
 │                             #   + gps_report.py / gps_analysis.py (its two pages)
 ├── .streamlit/config.toml    # dark theme (mirrors gps/config.py) + usage stats off
 ├── tools/                    # one-off extractors that write into data/ (not imported by the package)
 ├── data/
-│   ├── seasons/<key>/{raw,processed}/   # per-season fixture data
+│   ├── seasons/<key>/raw/               # primary team's fixture export, for the GPS fixture link
 │   ├── gps/gps_sessions.csv             # every training + match GPS session, one tidy file
 │   └── body/                            # body-composition assessments from nutrition reports
-└── tests/                    # pytest — includes regression tests for two bugs found while porting
+└── tests/                    # pytest
 ```
 
 ## Important instructions
@@ -166,17 +186,14 @@ Football-Stats-Data/
   re-sync (see above). Every threshold, colour and column mapping of the GPS
   report lives in `src/football_stats/gps/config.py`; change it there, not in
   chart code.
-- **Adding a season/division is a config change, not a code change** — see
-  "Declaring a season" in [`docs/season_prediction.md`](docs/season_prediction.md).
-  Don't hardcode a new team or competition name into `season/*.py`.
-- **After scraping fresh fixtures**, you still need to re-run the processing step
-  (`split_played_remaining` + `save_processed`) to refresh
-  `data/seasons/<key>/processed/` — the scraper only writes `raw/`. See step 3 of
-  the season-prediction doc.
-- **`mansores_2025_26` is only partially seeded** (Mansores' own games only, not
-  other teams' games against each other) — the season dashboard shows an in-app
-  banner about this. Don't treat other teams' standings rows as accurate until
-  you've run the scraper for full coverage.
+- **This repo is the GPS dashboard only.** League tables, the Monte Carlo
+  season prediction, model evaluation and the zerozero.pt scraper belong in
+  football-data-analysis. Don't add them back here; if the dashboard needs
+  something from the league side, bring in its *output* (a CSV under
+  `data/seasons/`), not its code.
+- **`data/seasons/` exists only for the GPS fixture link** and holds raw
+  exports produced by football-data-analysis. Don't edit them by hand: re-run
+  that pipeline and copy the file (see "Fixture context" above).
 - **Every chart is Plotly** (`gps/charts.py`, and the `plot_*` methods in
   `gps/analyzer.py`), styled with the `gps_dark` template. Render with
   `st.plotly_chart(fig, theme=None)` — without `theme=None` Streamlit's own theme
@@ -195,8 +212,8 @@ Football-Stats-Data/
   Setup steps above on a fresh clone.
 - **`.gitignore` ignores `*.csv` by default and then re-includes `data/gps/` and
   `data/seasons/`.** Those two are the repo's actual dataset and are tracked;
-  without the `!` lines a future scrape would write a CSV that git silently
-  ignored. `data/body/` is excluded as a whole directory rather than by
+  without the `!` lines a refreshed fixture export would be a CSV that git
+  silently ignored. `data/body/` is excluded as a whole directory rather than by
   extension, because `body_analysis.xlsx` is the same personal health record in
   another container.
 - **Don't badge a metric as "SkillCorner" without checking
@@ -311,33 +328,25 @@ Football-Stats-Data/
   [`docs/position_baselines.md`](docs/position_baselines.md) before adding a
   number here; don't add position-specific figures without a citation.
 
-## Known bugs fixed while porting
-
-Both were caught by testing against real data, not by inspection — see
-`tests/test_fixtures.py` and `tests/test_predictor.py`.
-
-1. **Home/away score swap** — the source notebooks read `Result` (always
-   "home score-away score") as if it were "tracked-team score-opponent score",
-   silently flipping the outcome of every away fixture. Fixed in `season/fixtures.py`.
-2. **Double-averaging in the predictor** — the source notebook's final merge
-   divided already-averaged simulation stats by `n_simulations` a second time,
-   producing nonsensical predicted values (e.g. `Draws_Predicted: 965`). Fixed in
-   `season/predictor.py`.
-
-Full explanation of both, with the exact numbers, in
-[`docs/season_prediction.md`](docs/season_prediction.md#known-bugs-fixed).
-
 ## What's outside this repo
 
-The parent `StatsSports/` folder (this repo lives inside it) still has:
+The parent `Futebol/` folder (this repo lives inside it) also has:
+
+- **`football-data-analysis/`**: the league side split out of this repo, as
+  notebooks on a tested package: a generic `core` (zerozero.pt pipeline,
+  fixtures, league table) and `analyses/` (Monte Carlo season prediction and
+  its evaluation; player stats).
+- **`SATS_Football_GPS_Advanced.xlsx`**: the STATSports workbook the GPS CSV is
+  synced from (see above).
 
 - **`Logos/`**, **`champions_analysys.ipynb`**, **`champions_utils.py`**,
   **`Jogos_Vitoias_Fermedo.xlsx`** — a multi-season "champions" comparison across
-  years, built on a hand-formatted spreadsheet. Not part of either focus area
-  above and not ported here; a reasonable future extension once there's a
-  reproducible (non-hand-edited) source for multi-season historical data.
+  years, built on a hand-formatted spreadsheet. Not ported anywhere
+  yet. Multi-season league history belongs in football-data-analysis, whose
+  pipeline can now recover past seasons by zerozero `epoca_id`: the
+  reproducible source this was waiting for.
 - **`_archive/`** — the original exploratory notebooks and intermediate xlsx/csv
-  exports this repo's `src/football_stats` package was built from (scraping
+  exports both repos' packages were built from (scraping
   notebooks, `football_performance_analysis.py`, the original
   `SATS_Football_GPS_Advanced.xlsx`, etc.). Kept for reference; nothing in this
   repo depends on it.

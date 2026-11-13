@@ -138,8 +138,9 @@ and `Result`.
 
 `Result` is always `"home score-away score"` regardless of which side the
 tracked team is on; `Location` only says whether the tracked team is home. This
-is exactly the trap behind the score-swap bug fixed in `season/fixtures.py`
-(see [`season_prediction.md`](season_prediction.md#known-bugs-fixed)), so
+is exactly the trap behind the score-swap bug fixed in the season model's
+`fixtures.py` (now `core/fixtures.py` in the football-data-analysis repo, see
+its `docs/core.md`, "Known bug fixed: home/away score swap"), so
 `load_primary_team_fixtures` assigns goals via `Location` and never by reading
 the score left to right. `test_result_is_read_as_home_away_not_tracked_team_first`
 pins it with an away win whose naive reading would be a loss.
@@ -165,17 +166,20 @@ into it.
 ### Coverage is bounded by the scraper, not the join
 
 Current state: **13 of 26** official GPS sessions link. The other 13 are matches
-played after the last fixture scrape, which stops at 2026-01-17. Re-running the
-scraper and reprocessing (step 3 of the season-prediction doc) fills them.
+played after the last fixture scrape, which stops at 2026-01-17. Re-scraping in
+football-data-analysis (`python -m football_data_analysis.core.scraping.cli mansores_2025_26`)
+and copying its `raw/mansores_fixtures.csv` into `data/seasons/mansores_2025_26/raw/`
+fills them.
 
 That group includes the two **Apuramento de Campeão** play-off rounds against
 Calvão and Gafanha. Those are now declared in `config.py` — the opponents are in
 `team_name_mapping`, and the competition is listed in the new
 `extra_competitions` field alongside the Taça — so they will link as soon as the
-scrape catches up. `extra_competitions` is deliberately **not** read by the
-league table or the predictor: those are defined over `competition_name`'s
-round-robin alone, and folding a cup tie or a play-off round into a league table
-would corrupt both.
+scrape catches up. (In football-data-analysis the league table and the predictor
+read `competition_name` alone; a cup tie or play-off round folded into a league
+table would corrupt both.) Note the football-data-analysis scraper keeps league rows
+only in `<slug>_fixtures.csv`; for the cup and play-off rows, copy its
+`<slug>_all_competitions.csv` over as `<slug>_fixtures.csv` instead.
 
 `link_coverage` reports the breakdown, so the gap stays visible rather than being
 inferred from a short table.
